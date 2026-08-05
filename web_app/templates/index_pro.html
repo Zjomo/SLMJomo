@@ -1,0 +1,1442 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LCOS-SLM 专业控制面板 - 菲涅尔透镜相位图生成系统</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/pro_style.css') }}">
+</head>
+<body>
+    <div class="app-container">
+        <!-- 顶部菜单栏 -->
+        <header class="menu-bar">
+            <div class="logo">
+                <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 30'%3E%3Ctext x='10' y='22' font-size='16' fill='%23fff'%3ELCOS-SLM%3C/text%3E%3C/svg%3E" alt="LCOS-SLM">
+                <span class="version">v2.0 Professional</span>
+            </div>
+            <nav class="menu-items">
+                <a href="#" class="menu-item active" onclick="switchTab('home')">🏠 首页</a>
+                <a href="#" class="menu-item" onclick="switchTab('patterns')">🎨 图案库</a>
+                <a href="#" class="menu-item" onclick="switchTab('calibration')">⚙️ 校正</a>
+                <a href="#" class="menu-item" onclick="switchTab('sequence')">▶️ 序列</a>
+                <a href="#" class="menu-item" onclick="switchTab('settings')">🔧 设置</a>
+            </nav>
+            <div class="status-bar">
+                <div class="device-status" id="device_status">
+                    <span class="status-icon">🔌</span>
+                    <span class="status-text">未连接</span>
+                </div>
+                <button class="btn-connect" onclick="connectDevice()">连接设备</button>
+            </div>
+        </header>
+
+        <!-- 主内容区 -->
+        <div class="main-workspace">
+            <!-- 左侧：功能导航 -->
+            <aside class="sidebar">
+                <div class="sidebar-section">
+                    <h3>📊 快速导航</h3>
+                    <ul class="nav-list">
+                        <li class="active" onclick="scrollToSection('fresnel')">
+                            <span class="icon">🔍</span>
+                            <span>菲涅尔透镜</span>
+                        </li>
+                        <li onclick="scrollToSection('fresnel-three-spots')">
+                            <span class="icon">⋯</span>
+                            <span>三点聚焦</span>
+                        </li>
+                        <li onclick="scrollToSection('axicon')">
+                            <span class="icon">🔺</span>
+                            <span>轴棱锥透镜</span>
+                        </li>
+                        <li onclick="scrollToSection('blaze')">
+                            <span class="icon">🔷</span>
+                            <span>闪耀光栅</span>
+                        </li>
+                        <li onclick="scrollToSection('sine')">
+                            <span class="icon">📐</span>
+                            <span>正弦光栅</span>
+                        </li>
+                        <li onclick="scrollToSection('vortex')">
+                            <span class="icon">🌀</span>
+                            <span>涡旋光束</span>
+                        </li>
+                        <li onclick="scrollToSection('random')">
+                            <span class="icon">🎲</span>
+                            <span>随机散斑</span>
+                        </li>
+                        <li onclick="scrollToSection('divide')">
+                            <span class="icon">⬛</span>
+                            <span>分屏图案</span>
+                        </li>
+                        <li onclick="scrollToSection('cross')">
+                            <span class="icon">✛</span>
+                            <span>十字测试图</span>
+                        </li>
+                        <li onclick="scrollToSection('cgh-simulation')">
+                            <span class="icon">🔮</span>
+                            <span>CGH Simulation</span>
+                        </li>
+                        <li onclick="scrollToSection('bmp-converter')">
+                            <span class="icon">🖼️</span>
+                            <span>BMP 转换器</span>
+                        </li>
+                        <li onclick="scrollToSection('fourier-sim')">
+                            <span class="icon">📡</span>
+                            <span>傅里叶面模拟</span>
+                        </li>
+                    </ul>
+                </div>
+
+                <div class="sidebar-section">
+                    <h3>💡 工作流</h3>
+                    <div class="workflow-buttons">
+                        <button class="workflow-btn" onclick="startWorkflow('new')">
+                            <span class="icon">➕</span>
+                            <span>新建项目</span>
+                        </button>
+                        <button class="workflow-btn" onclick="startWorkflow('open')">
+                            <span class="icon">📂</span>
+                            <span>打开项目</span>
+                        </button>
+                        <button class="workflow-btn" onclick="startWorkflow('save')">
+                            <span class="icon">💾</span>
+                            <span>保存项目</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="sidebar-section">
+                    <h3>📈 最近使用</h3>
+                    <ul class="recent-list" id="recent_patterns">
+                        <li onclick="loadRecentPattern('fresnel_1000mm')">
+                            <span class="pattern-name">菲涅尔透镜 1000mm</span>
+                            <span class="pattern-time">2分钟前</span>
+                        </li>
+                        <li onclick="loadRecentPattern('grating_16')">
+                            <span class="pattern-name">衍射光栅 16阶</span>
+                            <span class="pattern-time">10分钟前</span>
+                        </li>
+                    </ul>
+                </div>
+            </aside>
+
+            <!-- 中央工作区 -->
+            <main class="workspace">
+                <!-- 菲涅尔透镜模块 -->
+                <section class="module-card" id="fresnel">
+                    <div class="module-header">
+                        <h2>🔍 菲涅尔透镜相位图生成</h2>
+                        <div class="module-actions">
+                            <button class="btn-icon" onclick="toggleModule('fresnel')" title="折叠/展开">📂</button>
+                            <button class="btn-icon" onclick="resetModule('fresnel')" title="重置参数">🔄</button>
+                            <button class="btn-icon" onclick="saveModuleAsPreset('fresnel')" title="保存为预设">💾</button>
+                        </div>
+                    </div>
+
+                    <div class="module-content">
+                        <div class="control-grid">
+                            <!-- 基础参数 -->
+                            <div class="param-panel">
+                                <h3>基础参数</h3>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">焦距 (mm)</span>
+                                        <input type="number" class="param-input" id="focus_mm" value="1000" min="100" max="5000" step="10">
+                                        <input type="range" class="param-slider" id="focus_slider" min="100" max="5000" value="1000" step="10">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">波长 (nm)</span>
+                                        <input type="number" class="param-input" id="wavelength_nm" value="532" min="355" max="1064" step="1">
+                                    </label>
+                                    <div class="wavelength-presets">
+                                        <button class="wl-preset" onclick="setWavelength(473)" data-wl="473">蓝光 473nm</button>
+                                        <button class="wl-preset active" onclick="setWavelength(532)" data-wl="532">绿光 532nm</button>
+                                        <button class="wl-preset" onclick="setWavelength(633)" data-wl="633">红光 633nm</button>
+                                        <button class="wl-preset" onclick="setWavelength(1064)" data-wl="1064">红外 1064nm</button>
+                                    </div>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">像素间距</span>
+                                        <select class="param-select" id="pitch_mode">
+                                            <option value="1" selected>1.25 μm (高分辨率)</option>
+                                            <option value="0">20 μm (标准)</option>
+                                        </select>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <!-- 高级参数 -->
+                            <div class="param-panel">
+                                <h3>高级参数</h3>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">旋转角度 (°)</span>
+                                        <input type="number" class="param-input" id="rotation_degree" value="0" min="0" max="360" step="1">
+                                        <input type="range" class="param-slider" id="rotation_slider" min="0" max="360" value="0" step="1">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">缩放因子</span>
+                                        <input type="number" class="param-input" id="scale_factor" value="1.0" min="0.1" max="5.0" step="0.1">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">X偏移 (像素)</span>
+                                        <input type="number" class="param-input" id="offset_x" value="0" min="-500" max="500" step="1">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">Y偏移 (像素)</span>
+                                        <input type="number" class="param-input" id="offset_y" value="0" min="-500" max="500" step="1">
+                                    </label>
+                                </div>
+                            </div>
+
+                            <!-- 图像参数 -->
+                            <div class="param-panel">
+                                <h3>图像参数</h3>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">宽度 (像素)</span>
+                                        <input type="number" class="param-input" id="x_pixels" value="1272" min="100" max="4096">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">高度 (像素)</span>
+                                        <input type="number" class="param-input" id="y_pixels" value="1024" min="100" max="4096">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">输出格式</span>
+                                        <select class="param-select" id="output_format">
+                                            <option value="bmp" selected>BMP (无损)</option>
+                                            <option value="png">PNG (压缩)</option>
+                                            <option value="tiff">TIFF (专业)</option>
+                                        </select>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <!-- 输入图像 -->
+                            <div class="param-panel">
+                                <h3>输入图像 (可选)</h3>
+
+                                <div class="file-upload-area" id="drop_zone">
+                                    <div class="upload-icon">📤</div>
+                                    <p>拖拽图像到此处或点击上传</p>
+                                    <input type="file" id="input_image" accept="image/*" style="display: none;">
+                                    <button class="btn-upload" onclick="document.getElementById('input_image').click()">
+                                        选择文件
+                                    </button>
+                                </div>
+
+                                <div class="image-preview" id="image_preview" style="display: none;">
+                                    <img id="preview_img" src="" alt="预览">
+                                    <button class="btn-remove" onclick="removeImage()">✖ 移除</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 操作按钮 -->
+                        <div class="action-bar">
+                            <button class="btn btn-primary" onclick="generateFresnel()">
+                                <span class="icon">🎨</span> 生成相位图
+                            </button>
+                            <button class="btn btn-secondary" onclick="addToSequence()">
+                                <span class="icon">➕</span> 添加到序列
+                            </button>
+                            <button class="btn btn-secondary" onclick="showOnSLM()">
+                                <span class="icon">📺</span> 显示到SLM
+                            </button>
+                            <button class="btn btn-download" onclick="downloadImage()" id="download_btn" disabled>
+                                <span class="icon">💾</span> 下载图像
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Three horizontal focal spots generated by a phase-only Fresnel hologram -->
+                <section class="module-card collapsed" id="fresnel-three-spots">
+                    <div class="module-header">
+                        <h2>⋯ 菲涅尔多点聚焦</h2>
+                        <div class="module-actions">
+                            <button class="btn-icon" onclick="toggleModule('fresnel-three-spots')" title="折叠/展开">📂</button>
+                            <button class="btn-icon" onclick="resetModule('fresnel-three-spots')" title="重置参数">🔄</button>
+                        </div>
+                    </div>
+                    <div class="module-content">
+                        <div class="control-grid">
+                            <div class="param-panel">
+                                <h3>光学参数</h3>
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">焦距 (mm)</span>
+                                        <input type="number" class="param-input" id="three_spot_focus" value="1000" min="1" max="10000" step="10">
+                                    </label>
+                                </div>
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">波长 (nm)</span>
+                                        <input type="number" class="param-input" id="three_spot_wavelength" value="532" min="200" max="2000" step="1">
+                                    </label>
+                                </div>
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">生成算法</span>
+                                        <select class="param-select" id="three_spot_algorithm" onchange="toggleThreeSpotOptimization()">
+                                            <option value="uniform_grating" selected>通用等强光栅（照明鲁棒）</option>
+                                            <option value="gaussian_wgs">高斯优化（指定光束）</option>
+                                            <option value="dammann">1×3 达曼光栅（快速）</option>
+                                            <option value="analytic">标准三焦点（光路诊断）</option>
+                                        </select>
+                                    </label>
+                                </div>
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">相位方向</span>
+                                        <select class="param-select" id="three_spot_phase_direction">
+                                            <option value="standard" selected>标准会聚</option>
+                                            <option value="inverted">反相（LUT 方向相反）</option>
+                                        </select>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="param-panel">
+                                <h3>焦点阵列</h3>
+                                <div class="three-spot-target" aria-label="三个水平等间距焦点">
+                                    <span></span><span></span><span></span>
+                                </div>
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">光斑数量 n</span>
+                                        <input type="number" class="param-input" id="three_spot_count" value="3" min="2" max="15" step="1" oninput="toggleThreeSpotOptimization()">
+                                    </label>
+                                </div>
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">相邻点间距 (mm)</span>
+                                        <input type="number" class="param-input" id="three_spot_spacing" value="1.0" min="0.01" max="20" step="0.05">
+                                    </label>
+                                </div>
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">SLM 像素尺寸 (µm)</span>
+                                        <input type="number" class="param-input" id="three_spot_pixel_size" value="12.5" min="0.1" max="100" step="0.1">
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="param-panel">
+                                <h3>图像参数</h3>
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">宽度 (像素)</span>
+                                        <input type="number" class="param-input" id="three_spot_width" value="1272" min="64" max="4096">
+                                    </label>
+                                </div>
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">高度 (像素)</span>
+                                        <input type="number" class="param-input" id="three_spot_height" value="1024" min="64" max="4096">
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="param-panel" id="three_spot_optimization_params">
+                                <h3>入射光束与优化</h3>
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">入射光束 1/e² 直径 (mm)</span>
+                                        <input type="number" class="param-input" id="three_spot_beam_diameter" value="10.0" min="0.1" max="100" step="0.1">
+                                    </label>
+                                </div>
+                                <div class="param-item" id="three_spot_iterations_container">
+                                    <label>
+                                        <span class="param-label">优化迭代次数</span>
+                                        <input type="number" class="param-input" id="three_spot_iterations" value="30" min="1" max="200" step="1">
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="param-panel" id="three_spot_dammann_params" style="display: none;">
+                                <h3>达曼光栅参数</h3>
+                                <div class="param-item">
+                                    <span class="param-label">自动计算周期</span>
+                                    <strong id="three_spot_dammann_period">-</strong>
+                                </div>
+                                <div class="param-item">
+                                    <span class="param-label">π 相位区域宽度</span>
+                                    <strong>26.474% / 周期</strong>
+                                </div>
+                                <div class="param-item">
+                                    <span class="param-label">三束理论总效率</span>
+                                    <strong>约 66.4%</strong>
+                                </div>
+                            </div>
+
+                            <div class="param-panel" id="three_spot_uniform_params">
+                                <h3>官方模拟采样对齐</h3>
+                                <div class="param-item">
+                                    <span class="param-label">实际间距；等效周期</span>
+                                    <strong id="three_spot_uniform_sampling">-</strong>
+                                </div>
+                                <div class="param-item">
+                                    <span class="param-label">照明变化行为</span>
+                                    <strong>各光斑同步缩放并保持等强高斯分布</strong>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="action-bar">
+                            <button class="btn btn-primary" onclick="generatePattern('fresnel_three_spots')">
+                                <span class="icon">⋯</span> 生成多点相位图
+                            </button>
+                            <button class="btn btn-secondary" onclick="addCurrentToSequence()">
+                                <span class="icon">➕</span> 添加到序列
+                            </button>
+                            <button class="btn btn-secondary" onclick="showCurrentOnSLM()">
+                                <span class="icon">📺</span> 显示到 SLM
+                            </button>
+                            <button class="btn btn-download" onclick="downloadCurrentImage()" id="fresnel_three_spots_download_btn" disabled>
+                                <span class="icon">💾</span> 下载图像
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 轴棱锥透镜模块 -->
+                <section class="module-card collapsed" id="axicon">
+                    <div class="module-header">
+                        <h2>🔺 轴棱锥透镜 (Axicon Lens)</h2>
+                        <div class="module-actions">
+                            <button class="btn-icon" onclick="toggleModule('axicon')" title="折叠/展开">📂</button>
+                            <button class="btn-icon" onclick="resetModule('axicon')" title="重置参数">🔄</button>
+                        </div>
+                    </div>
+                    <div class="module-content">
+                        <div class="control-grid">
+                            <div class="param-panel">
+                                <h3>基础参数</h3>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">Radius 相位周期半径（像素）</span>
+                                        <input type="number" class="param-input" id="axicon_radius" value="100" min="10" max="1000" step="1">
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="param-panel">
+                                <h3>图像参数</h3>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">宽度（像素）</span>
+                                        <input type="number" class="param-input" id="axicon_width" value="512" min="64" max="4096">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">高度（像素）</span>
+                                        <input type="number" class="param-input" id="axicon_height" value="512" min="64" max="4096">
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="action-bar">
+                            <button class="btn btn-primary" onclick="generatePattern('axicon')">
+                                <span class="icon">🎨</span> 生成轴棱锥
+                            </button>
+                            <button class="btn btn-secondary" onclick="addCurrentToSequence()">
+                                <span class="icon">➕</span> 添加到序列
+                            </button>
+                            <button class="btn btn-secondary" onclick="showCurrentOnSLM()">
+                                <span class="icon">📺</span> 显示到SLM
+                            </button>
+                            <button class="btn btn-download" onclick="downloadCurrentImage()" id="axicon_download_btn" disabled>
+                                <span class="icon">💾</span> 下载图像
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 闪耀光栅模块 -->
+                <section class="module-card collapsed" id="blaze">
+                    <div class="module-header">
+                        <h2>🔷 闪耀光栅 (Blaze Grating)</h2>
+                        <div class="module-actions">
+                            <button class="btn-icon" onclick="toggleModule('blaze')" title="折叠/展开">📂</button>
+                            <button class="btn-icon" onclick="resetModule('blaze')" title="重置参数">🔄</button>
+                        </div>
+                    </div>
+                    <div class="module-content">
+                        <div class="control-grid">
+                            <div class="param-panel">
+                                <h3>基础参数</h3>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">Period 周期（像素）</span>
+                                        <input type="number" class="param-input" id="blaze_period" value="50" min="2" max="1000" step="1">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">Angle 旋转角度（°）</span>
+                                        <input type="number" class="param-input" id="blaze_angle" value="0" min="0" max="180" step="1">
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="param-panel">
+                                <h3>图像参数</h3>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">宽度（像素）</span>
+                                        <input type="number" class="param-input" id="blaze_width" value="512" min="64" max="4096">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">高度（像素）</span>
+                                        <input type="number" class="param-input" id="blaze_height" value="512" min="64" max="4096">
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="action-bar">
+                            <button class="btn btn-primary" onclick="generatePattern('blaze')">
+                                <span class="icon">🎨</span> 生成闪耀光栅
+                            </button>
+                            <button class="btn btn-secondary" onclick="addCurrentToSequence()">
+                                <span class="icon">➕</span> 添加到序列
+                            </button>
+                            <button class="btn btn-secondary" onclick="showCurrentOnSLM()">
+                                <span class="icon">📺</span> 显示到SLM
+                            </button>
+                            <button class="btn btn-download" onclick="downloadCurrentImage()" id="blaze_download_btn" disabled>
+                                <span class="icon">💾</span> 下载图像
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 正弦光栅模块 -->
+                <section class="module-card collapsed" id="sine">
+                    <div class="module-header">
+                        <h2>📐 正弦光栅 (Sine Grating)</h2>
+                        <div class="module-actions">
+                            <button class="btn-icon" onclick="toggleModule('sine')" title="折叠/展开">📂</button>
+                            <button class="btn-icon" onclick="resetModule('sine')" title="重置参数">🔄</button>
+                        </div>
+                    </div>
+                    <div class="module-content">
+                        <div class="control-grid">
+                            <div class="param-panel">
+                                <h3>基础参数</h3>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">Period 周期（像素）</span>
+                                        <input type="number" class="param-input" id="sine_period" value="50" min="2" max="1000" step="1">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">Angle 旋转角度（°）</span>
+                                        <input type="number" class="param-input" id="sine_angle" value="0" min="0" max="180" step="1">
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="param-panel">
+                                <h3>图像参数</h3>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">宽度（像素）</span>
+                                        <input type="number" class="param-input" id="sine_width" value="512" min="64" max="4096">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">高度（像素）</span>
+                                        <input type="number" class="param-input" id="sine_height" value="512" min="64" max="4096">
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="action-bar">
+                            <button class="btn btn-primary" onclick="generatePattern('sine')">
+                                <span class="icon">🎨</span> 生成正弦光栅
+                            </button>
+                            <button class="btn btn-secondary" onclick="addCurrentToSequence()">
+                                <span class="icon">➕</span> 添加到序列
+                            </button>
+                            <button class="btn btn-secondary" onclick="showCurrentOnSLM()">
+                                <span class="icon">📺</span> 显示到SLM
+                            </button>
+                            <button class="btn btn-download" onclick="downloadCurrentImage()" id="sine_download_btn" disabled>
+                                <span class="icon">💾</span> 下载图像
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 涡旋光束模块 -->
+                <section class="module-card collapsed" id="vortex">
+                    <div class="module-header">
+                        <h2>🌀 涡旋光束 (Vortex Beam)</h2>
+                        <div class="module-actions">
+                            <button class="btn-icon" onclick="toggleModule('vortex')" title="折叠/展开">📂</button>
+                            <button class="btn-icon" onclick="resetModule('vortex')" title="重置参数">🔄</button>
+                        </div>
+                    </div>
+                    <div class="module-content">
+                        <div class="control-grid">
+                            <div class="param-panel">
+                                <h3>基础参数</h3>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">l-number 拓扑荷数</span>
+                                        <input type="number" class="param-input" id="vortex_lnumber" value="1" min="-50" max="50" step="1">
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="param-panel">
+                                <h3>图像参数</h3>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">宽度（像素）</span>
+                                        <input type="number" class="param-input" id="vortex_width" value="512" min="64" max="4096">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">高度（像素）</span>
+                                        <input type="number" class="param-input" id="vortex_height" value="512" min="64" max="4096">
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="action-bar">
+                            <button class="btn btn-primary" onclick="generatePattern('vortex')">
+                                <span class="icon">🎨</span> 生成涡旋光束
+                            </button>
+                            <button class="btn btn-secondary" onclick="addCurrentToSequence()">
+                                <span class="icon">➕</span> 添加到序列
+                            </button>
+                            <button class="btn btn-secondary" onclick="showCurrentOnSLM()">
+                                <span class="icon">📺</span> 显示到SLM
+                            </button>
+                            <button class="btn btn-download" onclick="downloadCurrentImage()" id="vortex_download_btn" disabled>
+                                <span class="icon">💾</span> 下载图像
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 随机散斑模块 -->
+                <section class="module-card collapsed" id="random">
+                    <div class="module-header">
+                        <h2>🎲 随机散斑 (Random Image)</h2>
+                        <div class="module-actions">
+                            <button class="btn-icon" onclick="toggleModule('random')" title="折叠/展开">📂</button>
+                            <button class="btn-icon" onclick="resetModule('random')" title="重置参数">🔄</button>
+                        </div>
+                    </div>
+                    <div class="module-content">
+                        <div class="control-grid">
+                            <div class="param-panel">
+                                <h3>基础参数</h3>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">Random Seed 随机种子（可选）</span>
+                                        <input type="number" class="param-input" id="random_seed" value="" placeholder="留空则随机">
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="param-panel">
+                                <h3>图像参数</h3>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">宽度（像素）</span>
+                                        <input type="number" class="param-input" id="random_width" value="512" min="64" max="4096">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">高度（像素）</span>
+                                        <input type="number" class="param-input" id="random_height" value="512" min="64" max="4096">
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="action-bar">
+                            <button class="btn btn-primary" onclick="generatePattern('random')">
+                                <span class="icon">🎨</span> 生成随机散斑
+                            </button>
+                            <button class="btn btn-secondary" onclick="addCurrentToSequence()">
+                                <span class="icon">➕</span> 添加到序列
+                            </button>
+                            <button class="btn btn-secondary" onclick="showCurrentOnSLM()">
+                                <span class="icon">📺</span> 显示到SLM
+                            </button>
+                            <button class="btn btn-download" onclick="downloadCurrentImage()" id="random_download_btn" disabled>
+                                <span class="icon">💾</span> 下载图像
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 分屏图案模块 -->
+                <section class="module-card collapsed" id="divide">
+                    <div class="module-header">
+                        <h2>⬛ 分屏图案 (Divide Screen)</h2>
+                        <div class="module-actions">
+                            <button class="btn-icon" onclick="toggleModule('divide')" title="折叠/展开">📂</button>
+                            <button class="btn-icon" onclick="resetModule('divide')" title="重置参数">🔄</button>
+                        </div>
+                    </div>
+                    <div class="module-content">
+                        <div class="control-grid">
+                            <div class="param-panel">
+                                <h3>基础参数</h3>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">左侧灰度值（0-255）</span>
+                                        <input type="number" class="param-input" id="divide_gray1" value="0" min="0" max="255" step="1">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">右侧灰度值（0-255）</span>
+                                        <input type="number" class="param-input" id="divide_gray2" value="255" min="0" max="255" step="1">
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="param-panel">
+                                <h3>图像参数</h3>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">宽度（像素）</span>
+                                        <input type="number" class="param-input" id="divide_width" value="1272" min="64" max="4096">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">高度（像素）</span>
+                                        <input type="number" class="param-input" id="divide_height" value="1024" min="64" max="4096">
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="action-bar">
+                            <button class="btn btn-primary" onclick="generatePattern('divide')">
+                                <span class="icon">🎨</span> 生成分屏图案
+                            </button>
+                            <button class="btn btn-secondary" onclick="addCurrentToSequence()">
+                                <span class="icon">➕</span> 添加到序列
+                            </button>
+                            <button class="btn btn-secondary" onclick="showCurrentOnSLM()">
+                                <span class="icon">📺</span> 显示到SLM
+                            </button>
+                            <button class="btn btn-download" onclick="downloadCurrentImage()" id="divide_download_btn" disabled>
+                                <span class="icon">💾</span> 下载图像
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 十字测试图模块 -->
+                <section class="module-card collapsed" id="cross">
+                    <div class="module-header">
+                        <h2>✛ 十字测试图 (Cross Pattern)</h2>
+                        <div class="module-actions">
+                            <button class="btn-icon" onclick="toggleModule('cross')" title="折叠/展开">📂</button>
+                            <button class="btn-icon" onclick="resetModule('cross')" title="重置参数">🔄</button>
+                        </div>
+                    </div>
+                    <div class="module-content">
+                        <div class="control-grid">
+                            <div class="param-panel">
+                                <h3>相位参数</h3>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">背景相位 (0-1，对应 0~2π)</span>
+                                        <input type="number" class="param-input" id="cross_background_phase" value="0.5" min="0" max="1" step="0.05">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">条纹相位 (0-1，对应 0~2π)</span>
+                                        <input type="number" class="param-input" id="cross_stripe_phase" value="0.0" min="0" max="1" step="0.05">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">交叉区域相位（可选）</span>
+                                        <input type="number" class="param-input" id="cross_intersection_phase" value="" min="0" max="1" step="0.05" placeholder="留空=不单独设置">
+                                    </label>
+                                    <div class="hint-text" style="margin-top: 5px; font-size: 11px; color: #666;">
+                                        设置后，水平与垂直条纹的交叉区域使用独立相位值。
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="param-panel">
+                                <h3>条纹参数</h3>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">条纹宽度（像素）</span>
+                                        <input type="number" class="param-input" id="cross_stripe_width" value="12" min="1" max="100" step="1">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">条纹间距（像素）</span>
+                                        <input type="number" class="param-input" id="cross_stripe_spacing" value="30" min="1" max="200" step="1">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">条纹数量（建议奇数）</span>
+                                        <input type="number" class="param-input" id="cross_stripe_number" value="3" min="1" max="21" step="2">
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="param-panel">
+                                <h3>图像参数</h3>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">宽度（像素）</span>
+                                        <input type="number" class="param-input" id="cross_width" value="1024" min="64" max="4096">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">高度（像素）</span>
+                                        <input type="number" class="param-input" id="cross_height" value="768" min="64" max="4096">
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="action-bar">
+                            <button class="btn btn-primary" onclick="generatePattern('cross')">
+                                <span class="icon">🎨</span> 生成十字测试图
+                            </button>
+                            <button class="btn btn-secondary" onclick="addCurrentToSequence()">
+                                <span class="icon">➕</span> 添加到序列
+                            </button>
+                            <button class="btn btn-secondary" onclick="showCurrentOnSLM()">
+                                <span class="icon">📺</span> 显示到SLM
+                            </button>
+                            <button class="btn btn-download" onclick="downloadCurrentImage()" id="cross_download_btn" disabled>
+                                <span class="icon">💾</span> 下载图像
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- CGH Simulation模块 -->
+                <section class="module-card" id="cgh-simulation">
+                    <div class="module-header">
+                        <h2>🔮 CGH Simulation - 计算机生成全息图</h2>
+                        <div class="module-actions">
+                            <button class="btn-icon" onclick="toggleModule('cgh-simulation')" title="折叠/展开">📂</button>
+                            <button class="btn-icon" onclick="resetModule('cgh-simulation')" title="重置参数">🔄</button>
+                        </div>
+                    </div>
+
+                    <div class="module-content">
+                        <div class="cgh-layout">
+                            <!-- 左侧：图像输入 -->
+                            <div class="cgh-left">
+                                <div class="param-panel">
+                                    <h3>目标图像</h3>
+
+                                    <div class="param-item">
+                                        <label>
+                                            <span class="param-label">目标图像地址</span>
+                                            <div class="file-input-group">
+                                                <input type="text" class="param-input" id="cgh_target_path" placeholder="选择或拖拽图像文件">
+                                                <button class="btn-browse" onclick="document.getElementById('cgh_input_image').click()">浏览...</button>
+                                                <input type="file" id="cgh_input_image" accept="image/*" style="display: none;">
+                                            </div>
+                                        </label>
+                                    </div>
+
+                                    <div class="cgh-preview-area">
+                                        <div class="cgh-preview-box" id="cgh_target_preview_box">
+                                            <h4>Target Phase image</h4>
+                                            <div class="preview-image-container">
+                                                <img id="cgh_target_image" src="" alt="目标相位图" style="display: none;">
+                                                <div class="preview-placeholder" id="cgh_target_placeholder">
+                                                    <span>请选择目标图像</span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div class="cgh-preview-box" id="cgh_light_preview_box">
+                                            <h4>Light image</h4>
+                                            <div class="preview-image-container">
+                                                <canvas id="cgh_light_canvas" style="display: none;"></canvas>
+                                                <div class="preview-placeholder" id="cgh_light_placeholder">
+                                                    <span>光斑形状预览</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 中间：参数控制 -->
+                            <div class="cgh-center">
+                                <div class="param-panel">
+                                    <h3>CGH 参数设置</h3>
+
+                                    <div class="param-item">
+                                        <label>
+                                            <span class="param-label">Repetition 迭代次数</span>
+                                            <input type="number" class="param-input" id="cgh_repetition" value="100" min="1" max="1000" step="1">
+                                        </label>
+                                    </div>
+
+                                    <div class="param-item">
+                                        <label>
+                                            <span class="param-label">Light shape 光斑形状</span>
+                                            <select class="param-select" id="cgh_light_shape">
+                                                <option value="gaussian" selected>Gaussian</option>
+                                                <option value="flat-circle">Flat-circle</option>
+                                                <option value="flat-square">Flat-square</option>
+                                            </select>
+                                        </label>
+                                    </div>
+
+                                    <div class="param-item">
+                                        <label>
+                                            <span class="param-label">size / mm 光斑尺寸</span>
+                                            <input type="number" class="param-input" id="cgh_light_size" value="10" min="0.1" max="100" step="0.1">
+                                        </label>
+                                        <div class="hint-text" id="cgh_size_hint">Gaussian : diameter(1/e2) /mm</div>
+                                    </div>
+
+                                    <div class="param-item">
+                                        <label>
+                                            <span class="param-label">CGH 算法</span>
+                                            <select class="param-select" id="cgh_algorithm">
+                                                <option value="gs" selected>Gerchberg-Saxton (GS)</option>
+                                                <option value="oc">OverCompensation (OC)</option>
+                                            </select>
+                                        </label>
+                                    </div>
+
+                                    <div class="param-item">
+                                        <label>
+                                            <span class="param-label">高斯光斑转换</span>
+                                            <select class="param-select" id="cgh_gaussian_spots" onchange="toggleSpotRadiusInput()">
+                                                <option value="0" selected>否（保持原始光斑）</option>
+                                                <option value="1">是（将点状光斑转为高斯分布）</option>
+                                            </select>
+                                        </label>
+                                        <div class="hint-text" id="gaussian_spot_hint" style="margin-top: 5px; font-size: 11px; color: #666;">
+                                            启用后，目标图像中的点状光斑将转换为高斯分布，远场再现时呈现平滑光斑。
+                                        </div>
+                                    </div>
+
+                                    <div class="param-item" id="spot_radius_container" style="display: none;">
+                                        <label>
+                                            <span class="param-label">高斯半径 (像素)</span>
+                                            <input type="number" class="param-input" id="cgh_spot_radius" value="10" min="2" max="50" step="1">
+                                        </label>
+                                        <div class="hint-text" style="margin-top: 5px; font-size: 11px; color: #666;">
+                                            光斑半径越大，高斯分布越平滑。建议值：5-20 像素。
+                                        </div>
+                                    </div>
+
+                                    <div class="param-item">
+                                        <label>
+                                            <span class="param-label">SLM 分辨率</span>
+                                            <div class="resolution-inputs">
+                                                <input type="number" class="param-input" id="cgh_width" value="256" min="64" max="4096" step="1">
+                                                <span>×</span>
+                                                <input type="number" class="param-input" id="cgh_height" value="256" min="64" max="4096" step="1">
+                                            </div>
+                                        </label>
+                                    </div>
+
+                                    <div class="cgh-control-buttons">
+                                        <button class="btn btn-cgh" onclick="calculateCGH()">
+                                            <span class="icon">🔍</span> Calculate CGH
+                                        </button>
+                                        <button class="btn btn-secondary" onclick="loadPatternFromMain()">
+                                            <span class="icon">📥</span> 从主程序加载图案
+                                        </button>
+                                        <button class="btn btn-secondary" onclick="loadCGHFromMain()">
+                                            <span class="icon">📂</span> 加载主程序CGH
+                                        </button>
+                                        <button class="btn btn-secondary" onclick="returnToMain()">
+                                            <span class="icon">↩️</span> 返回主程序
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 右侧：再生图像 -->
+                            <div class="cgh-right">
+                                <div class="param-panel">
+                                    <h3>Regenerate image</h3>
+
+                                    <div class="regenerate-preview" id="cgh_regenerate_preview">
+                                        <canvas id="cgh_regenerate_canvas"></canvas>
+                                        <div class="preview-placeholder" id="cgh_regenerate_placeholder">
+                                            <span>点击 Calculate CGH 生成再生图像</span>
+                                        </div>
+                                    </div>
+
+                                    <div class="zoom-info">
+                                        <span>Zoom</span>
+                                        <div class="zoom-hint">
+                                            <div>Left click → Zoom in</div>
+                                            <div>Shift+Left → Zoom out</div>
+                                        </div>
+                                    </div>
+
+                                    <div class="image-info" id="cgh_image_info">
+                                        等待生成...
+                                    </div>
+
+                                    <div class="cgh-action-buttons">
+                                        <button class="btn btn-download" onclick="downloadCGH()" id="cgh_download_btn" disabled>
+                                            <span class="icon">💾</span> 下载CGH
+                                        </button>
+                                        <button class="btn btn-primary" onclick="sendCGHToSLM()" id="cgh_send_btn" disabled>
+                                            <span class="icon">📺</span> 发送到SLM
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- BMP 格式转换器模块 -->
+                <section class="module-card collapsed" id="bmp-converter">
+                    <div class="module-header">
+                        <h2>🖼️ BMP 转换器 - 任意格式转 8-bit BMP</h2>
+                        <div class="module-actions">
+                            <button class="btn-icon" onclick="toggleModule('bmp-converter')" title="折叠/展开">📂</button>
+                            <button class="btn-icon" onclick="resetConverter()" title="重置">🔄</button>
+                        </div>
+                    </div>
+
+                    <div class="module-content">
+                        <div class="control-grid">
+                            <!-- 输入图像 -->
+                            <div class="param-panel">
+                                <h3>输入图像</h3>
+
+                                <div class="file-upload-area" id="converter_drop_zone">
+                                    <div class="upload-icon">📤</div>
+                                    <p>拖拽 PNG / JPG / TIFF 等到此处或点击上传</p>
+                                    <input type="file" id="converter_input_image" accept="image/*" style="display: none;">
+                                    <button class="btn-upload" onclick="document.getElementById('converter_input_image').click()">
+                                        选择文件
+                                    </button>
+                                </div>
+
+                                <div class="image-preview" id="converter_image_preview" style="display: none;">
+                                    <img id="converter_preview_img" src="" alt="输入预览">
+                                    <button class="btn-remove" onclick="removeConverterImage()">✖ 移除</button>
+                                </div>
+
+                                <div class="image-info" id="converter_input_info" style="margin-top: 10px; font-size: 12px; color: #666;">
+                                    尚未选择图像
+                                </div>
+                            </div>
+
+                            <!-- 输出参数 -->
+                            <div class="param-panel">
+                                <h3>输出参数</h3>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">输出宽度 (像素)</span>
+                                        <input type="number" class="param-input" id="converter_width" value="1272" min="64" max="4096" step="1">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">输出高度 (像素)</span>
+                                        <input type="number" class="param-input" id="converter_height" value="1024" min="64" max="4096" step="1">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">保持原始尺寸</span>
+                                        <input type="checkbox" id="converter_keep_size" onchange="toggleConverterSizeInputs()">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">转换为灰度</span>
+                                        <select class="param-select" id="converter_grayscale">
+                                            <option value="1" selected>是（推荐，符合 SLM 要求）</option>
+                                            <option value="0">否（保留原图通道）</option>
+                                        </select>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <!-- 输出预览 -->
+                            <div class="param-panel">
+                                <h3>输出预览</h3>
+
+                                <div class="image-preview" id="converter_output_preview" style="min-height: 150px; display: flex; align-items: center; justify-content: center; background: #f8f9fa; border: 1px dashed #ddd; border-radius: 6px;">
+                                    <img id="converter_output_img" src="" alt="BMP 预览" style="display: none; max-width: 100%; max-height: 200px;">
+                                    <span id="converter_output_placeholder" style="color: #999; font-size: 13px;">转换后预览</span>
+                                </div>
+
+                                <div class="image-info" id="converter_output_info" style="margin-top: 10px; font-size: 12px; color: #666;">
+                                    等待转换...
+                                </div>
+                            </div>
+
+                            <!-- 操作按钮 -->
+                            <div class="param-panel">
+                                <h3>操作</h3>
+
+                                <div class="action-bar" style="flex-direction: column; align-items: stretch; gap: 10px;">
+                                    <button class="btn btn-primary" onclick="convertToBmp()">
+                                        <span class="icon">🔄</span> 转换为 8-bit BMP
+                                    </button>
+                                    <button class="btn btn-download" onclick="downloadConvertedBmp()" id="converter_download_btn" disabled>
+                                        <span class="icon">💾</span> 下载 BMP
+                                    </button>
+                                </div>
+
+                                <div class="hint-text" style="margin-top: 10px; font-size: 12px; color: #666;">
+                                    输出格式：Windows BMP，8-bit 灰度，与官方 SLM 软件兼容。
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 傅里叶面强度模拟模块 -->
+                <section class="module-card collapsed" id="fourier-sim">
+                    <div class="module-header">
+                        <h2>📡 傅里叶面强度模拟 (Fourier-plane Simulation)</h2>
+                        <div class="module-actions">
+                            <button class="btn-icon" onclick="toggleModule('fourier-sim')" title="折叠/展开">📂</button>
+                            <button class="btn-icon" onclick="resetModule('fourier-sim')" title="重置参数">🔄</button>
+                        </div>
+                    </div>
+                    <div class="module-content">
+                        <div class="control-grid">
+                            <!-- 照明参数 -->
+                            <div class="param-panel">
+                                <h3>照明设置</h3>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">照明类型</span>
+                                        <select class="param-select" id="fourier_illumination_type" onchange="toggleBeamRadiusInput()">
+                                            <option value="uniform" selected>均匀照明 (Uniform)</option>
+                                            <option value="gaussian">高斯光束 (Gaussian)</option>
+                                        </select>
+                                    </label>
+                                </div>
+
+                                <div class="param-item" id="fourier_beam_radius_container" style="display: none;">
+                                    <label>
+                                        <span class="param-label">高斯光束半径 (像素)</span>
+                                        <input type="number" class="param-input" id="fourier_beam_radius" value="250" min="10" max="2000" step="10">
+                                    </label>
+                                    <div class="hint-text" style="margin-top: 5px; font-size: 11px; color: #666;">
+                                        高斯光束的束腰半径，影响照明范围。
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 输出参数 -->
+                            <div class="param-panel">
+                                <h3>输出参数</h3>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">输出宽度 (像素)</span>
+                                        <input type="number" class="param-input" id="fourier_width" value="512" min="64" max="2048">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">输出高度 (像素)</span>
+                                        <input type="number" class="param-input" id="fourier_height" value="512" min="64" max="2048">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">伪彩色映射</span>
+                                        <select class="param-select" id="fourier_colormap">
+                                            <option value="magma" selected>Magma (黑→紫→橙→白)</option>
+                                            <option value="inferno">Inferno (黑→红→橙→白)</option>
+                                            <option value="plasma">Plasma (蓝紫→橙→黄)</option>
+                                            <option value="viridis">Viridis (紫→绿→黄)</option>
+                                            <option value="jet">Jet (蓝→青→黄→红)</option>
+                                            <option value="hot">Hot (黑→红→黄→白)</option>
+                                            <option value="grayscale">Grayscale (灰度)</option>
+                                        </select>
+                                    </label>
+                                    <div class="hint-text" style="margin-top: 5px; font-size: 11px; color: #666;">
+                                        选择伪彩色方案，用于彩色强度分布显示。
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 输入源 -->
+                            <div class="param-panel">
+                                <h3>相位图输入源</h3>
+                                <div class="hint-text" style="margin-bottom: 10px; font-size: 12px; color: #666;">
+                                    选择输入方式：
+                                </div>
+                                <div class="action-bar" style="flex-direction: column; align-items: stretch; gap: 8px;">
+                                    <button class="btn btn-secondary" onclick="useCurrentPhaseForFourier()">
+                                        <span class="icon">📋</span> 使用当前已生成的相位图
+                                    </button>
+                                    <button class="btn btn-secondary" onclick="document.getElementById('fourier_upload_input').click()">
+                                        <span class="icon">📤</span> 上传相位图
+                                    </button>
+                                    <input type="file" id="fourier_upload_input" accept="image/*" style="display: none;" onchange="handleFourierUpload(event)">
+                                </div>
+                                <div id="fourier_input_status" style="margin-top: 10px; font-size: 12px; color: #999;">
+                                    尚未选择相位图
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 结果显示 -->
+                        <div class="control-grid" style="margin-top: 15px;">
+                            <div class="param-panel">
+                                <h3>🎨 彩色强度分布 (Color Intensity)</h3>
+                                <div class="image-preview-area" style="text-align: center; min-height: 200px; display: flex; align-items: center; justify-content: center; border: 1px dashed #ccc; border-radius: 8px;">
+                                    <img id="fourier_color_img" src="" alt="彩色强度" style="display: none; max-width: 100%; max-height: 300px;">
+                                    <span id="fourier_color_placeholder" style="color: #999; font-size: 13px;">点击模拟后显示</span>
+                                </div>
+                                <div id="fourier_colormap_label" style="margin-top: 5px; font-size: 11px; color: #666; text-align: center;"></div>
+                            </div>
+
+                            <div class="param-panel">
+                                <h3>对数强度分布 (Log Intensity)</h3>
+                                <div class="image-preview-area" style="text-align: center; min-height: 200px; display: flex; align-items: center; justify-content: center; border: 1px dashed #ccc; border-radius: 8px;">
+                                    <img id="fourier_log_img" src="" alt="对数强度" style="display: none; max-width: 100%; max-height: 300px;">
+                                    <span id="fourier_log_placeholder" style="color: #999; font-size: 13px;">点击模拟后显示</span>
+                                </div>
+                            </div>
+
+                            <div class="param-panel">
+                                <h3>原始强度分布 (Raw Intensity)</h3>
+                                <div class="image-preview-area" style="text-align: center; min-height: 200px; display: flex; align-items: center; justify-content: center; border: 1px dashed #ccc; border-radius: 8px;">
+                                    <img id="fourier_raw_img" src="" alt="原始强度" style="display: none; max-width: 100%; max-height: 300px;">
+                                    <span id="fourier_raw_placeholder" style="color: #999; font-size: 13px;">点击模拟后显示</span>
+                                </div>
+                            </div>
+
+                            <div class="param-panel">
+                                <h3>照明光束预览</h3>
+                                <div class="image-preview-area" style="text-align: center; min-height: 200px; display: flex; align-items: center; justify-content: center; border: 1px dashed #ccc; border-radius: 8px;">
+                                    <img id="fourier_illumination_img" src="" alt="照明光束" style="display: none; max-width: 100%; max-height: 300px;">
+                                    <span id="fourier_illumination_placeholder" style="color: #999; font-size: 13px;">选择高斯照明后显示</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 操作按钮 -->
+                        <div class="action-bar" style="margin-top: 15px;">
+                            <button class="btn btn-primary" onclick="runFourierSimulation()">
+                                <span class="icon">🚀</span> 开始模拟
+                            </button>
+                            <button class="btn btn-download" onclick="downloadFourierResult()" id="fourier_download_btn" disabled>
+                                <span class="icon">💾</span> 下载结果
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 序列播放模块 -->
+                <section class="module-card" id="sequence-panel">
+                    <div class="module-header">
+                        <h2>▶️ 序列播放控制</h2>
+                    </div>
+                    <div class="module-content">
+                        <div class="sequence-controls">
+                            <button class="btn-control" onclick="playSequence()" id="play_btn">
+                                <span class="icon">▶️</span> 播放
+                            </button>
+                            <button class="btn-control" onclick="pauseSequence()" id="pause_btn" disabled>
+                                <span class="icon">⏸️</span> 暂停
+                            </button>
+                            <button class="btn-control" onclick="stopSequence()">
+                                <span class="icon">⏹️</span> 停止
+                            </button>
+                        </div>
+
+                        <div class="sequence-list" id="sequence_list">
+                            <div class="sequence-empty">
+                                <p>暂无序列，请添加图案</p>
+                            </div>
+                        </div>
+
+                        <div class="sequence-settings">
+                            <label>
+                                <span>播放间隔 (ms):</span>
+                                <input type="number" id="play_interval" value="1000" min="100" max="10000" step="100">
+                            </label>
+                            <label>
+                                <span>循环播放:</span>
+                                <input type="checkbox" id="loop_play">
+                            </label>
+                        </div>
+                    </div>
+                </section>
+            </main>
+
+            <!-- 右侧：预览和监控 -->
+            <aside class="preview-sidebar">
+                <div class="preview-panel">
+                    <div class="preview-header">
+                        <h3>👁️ 相位图预览</h3>
+                        <div class="preview-tools">
+                            <button class="btn-tool" onclick="zoomIn()">🔍+</button>
+                            <button class="btn-tool" onclick="zoomOut()">🔍-</button>
+                            <button class="btn-tool" onclick="resetZoom()">↻</button>
+                        </div>
+                    </div>
+                    <div class="preview-container" id="preview_container">
+                        <div class="placeholder">
+                            <div class="placeholder-icon">🔮</div>
+                            <p>调整参数后点击生成</p>
+                        </div>
+                        <canvas id="phase_canvas" style="display: none;"></canvas>
+                        <img id="phase_image" style="display: none;">
+                    </div>
+                    <div class="loading-overlay" id="loading" style="display: none;">
+                        <div class="spinner"></div>
+                        <p>正在生成...</p>
+                    </div>
+                </div>
+
+                <div class="info-panel">
+                    <h3>📊 参数信息</h3>
+                    <div class="info-grid" id="param_info">
+                        <div class="info-item">
+                            <span class="label">焦距:</span>
+                            <span class="value" id="info_focus">-</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="label">波长:</span>
+                            <span class="value" id="info_wavelength">-</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="label">分辨率:</span>
+                            <span class="value" id="info_resolution">-</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="label">生成时间:</span>
+                            <span class="value" id="info_time">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="profile-panel">
+                    <h3>📈 相位分布曲线</h3>
+                    <canvas id="profile_canvas"></canvas>
+                </div>
+
+                <div class="history-panel">
+                    <h3>📜 操作历史</h3>
+                    <div class="history-list" id="history_list"></div>
+                </div>
+            </aside>
+        </div>
+
+        <!-- 底部状态栏 -->
+        <footer class="status-footer">
+            <div class="status-left">
+                <span>设备: <strong id="device_name">未连接</strong></span>
+                <span>|</span>
+                <span>显示器: <strong id="monitor_name">SLM #2</strong></span>
+            </div>
+            <div class="status-center">
+                <span>就绪</span>
+            </div>
+            <div class="status-right">
+                <span id="current_time">--:--:--</span>
+            </div>
+        </footer>
+    </div>
+
+    <!-- JavaScript -->
+    <script src="{{ url_for('static', filename='js/pro_main.js') }}"></script>
+</body>
+</html>

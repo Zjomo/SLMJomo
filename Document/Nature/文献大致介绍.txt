@@ -1,0 +1,35 @@
+1. Optical generative models — Nature (2025)
+标题：Optical generative models
+杂志：Nature（2025）
+核心贡献：首次提出并实验验证了能够不依赖传统电子算力，通过光学系统（如 SLM + 光传播结构）生成多种类型图像的 光学生成模型。
+结合数字浅编码器与可重新配置光学解码器，实现全光的图像创生；
+可生成包括手写数字、人脸、产品图像等多种数据分布；
+成像速度极快且不消耗传统 AI 计算电力，在能效和并行性方面具有革命意义。
+👉 这一成果展示了 生成式 AI 与光学系统的深度融合，可能成为“全光 AI 推理/生成平台”的基础。
+
+
+2. Neural phase microscopy with metasurface optics — Nature Communications (2026)
+标题：Neural phase microscopy with metasurface optics
+杂志：Nature Communications（2026）
+核心贡献：
+利用 纳米光子超构面 + AI 算法 实现高速纳米尺度定量相位成像，刷新了传统光学相位成像的性能极限。
+结合 AI 重建模型提升成像精度且使系统更紧凑。
+👉 这种 AI + 光学硬件协同重建模式是未来智能成像（尤其是 biomedical / 智能传感）发展的典型方向。
+
+
+3. Photonic deep learning architectures — Nature Communications (2025)
+标题：Hundred-layer photonic deep learning
+杂志：Nature Communications（2025）
+贡献亮点：
+打破光学神经网络层数受限的桎梏，构建大规模光子深度学习架构；
+提出可扩展的深度光学学习结构，有望在高层次 AI 推理中替代部分电子计算。
+👉 这一成果对于 AI 推理硬件级别上的光学加速 有里程碑意义。
+
+
+4. Optoelectronic generative adversarial networks — Nature / Nat 系统延伸
+标题：Optoelectronic generative adversarial network
+杂志：Nature Physics / Nature 系列（2025）
+贡献：
+将生成对抗网络（GAN）结构与光学/电子混合硬件紧密结合；
+在图像生成、图像修复等任务上实现了比纯电子 GAN 更高的速度与能效比。
+👉 代表光学 + AI 在生成对抗与视觉任务中的实际突破。
