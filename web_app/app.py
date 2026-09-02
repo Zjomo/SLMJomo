@@ -794,7 +794,100 @@ class SLMPatternGenerator:
         gray = phase_wrapped / (2 * np.pi) * 255.0
         return np.rint(gray).astype(np.uint8)
 
-    # ------------------- 9. 兼容旧的菲涅尔透镜 -------------------
+    # ------------------- 9. 内圈高斯 + 外圈反高斯复合光斑 -------------------
+    @staticmethod
+    def double_ring_phase(
+        width=512,
+        height=512,
+        inner_radius=16.0,
+        outer_radius=50.0,
+        inner_intensity=0.7,
+        outer_intensity=1.0,
+        between_intensity=0.2,
+        inner_width=None,
+        outer_width=10.0,
+        iterations=100,
+        seed=2026,
+    ):
+        """Generate a phase-only hologram using the SLM_TEST radial model.
+
+        The target is composed of a flat in-aperture baseline, a centered
+        Gaussian peak, and a Gaussian edge peak at ``outer_radius``.  The
+        ``inner_radius`` gate keeps the center component inside the requested
+        inner spot while ``inner_width``/``outer_width`` control the two peak
+        widths (equivalent to ``w_in``/``w_out`` in SLM_TEST.m).
+        """
+        width = int(width)
+        height = int(height)
+        if width < 32 or height < 32:
+            raise ValueError("图像分辨率不能小于 32 像素")
+        inner_radius = float(inner_radius)
+        outer_radius = float(outer_radius)
+        if not np.isfinite(inner_radius) or not np.isfinite(outer_radius):
+            raise ValueError("内外圈半径必须是有限数值")
+        if not (1 <= inner_radius < outer_radius):
+            raise ValueError("必须满足 1 <= 内圈半径 < 外圈半径")
+        if outer_radius > min(width, height) / 2:
+            raise ValueError(
+                f"外圈半径不能超过画布半径 {min(width, height) / 2:g} 像素"
+            )
+        for name, value in (("内圈中心光强", inner_intensity), ("外圈光强", outer_intensity), ("圈间光强", between_intensity)):
+            if not 0 <= float(value) <= 1:
+                raise ValueError(f"{name}必须在 0 到 1 之间")
+        inner_width = inner_radius / 2.0 if inner_width is None else float(inner_width)
+        outer_width = float(outer_width)
+        if not np.isfinite(inner_width) or not np.isfinite(outer_width):
+            raise ValueError("w_in 和 w_out 必须是有限数值")
+        if inner_width <= 0 or outer_width <= 0:
+            raise ValueError("w_in 和 w_out 必须大于 0")
+        if inner_width > outer_radius or outer_width > outer_radius:
+            raise ValueError("w_in 和 w_out 不能大于外圈半径")
+        iterations = int(iterations)
+        if not 1 <= iterations <= 200:
+            raise ValueError("迭代次数必须在 1 到 200 之间")
+
+        y, x = np.ogrid[:height, :width]
+        cx = (width - 1) / 2.0
+        cy = (height - 1) / 2.0
+        radius = np.sqrt((x - cx) ** 2 + (y - cy) ** 2)
+        # Match SLM_TEST.m: I_flat + center Gaussian + edge Gaussian,
+        # restricted to the circular aperture R <= R_max.
+        aperture = radius <= outer_radius
+        inner_gate_edge = max(inner_width * 0.15, 0.75)
+        inner_gate = 1.0 / (1.0 + np.exp((radius - inner_radius) / inner_gate_edge))
+        inner_shape = np.exp(-0.5 * (radius / inner_width) ** 2) * inner_gate
+        outer_shape = np.exp(-0.5 * ((radius - outer_radius) / outer_width) ** 2)
+        target_intensity = (
+            float(between_intensity)
+            + (float(inner_intensity) - float(between_intensity)) * inner_shape
+            + (float(outer_intensity) - float(between_intensity)) * outer_shape
+        )
+        target_intensity = np.where(aperture, target_intensity, 0.0)
+        target_intensity = np.clip(target_intensity, 0.0, None)
+        max_target = float(np.max(target_intensity))
+        if max_target <= 0:
+            raise ValueError("目标光强不能全部为零")
+        target_intensity /= max_target
+
+        rng = np.random.default_rng(int(seed))
+        phase = rng.uniform(0.0, 2.0 * np.pi, (height, width))
+        target_amplitude = np.sqrt(target_intensity)
+        for _ in range(iterations):
+            slm_field = np.exp(1j * phase)
+            far_field = np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(slm_field)))
+            constrained_far = target_amplitude * np.exp(1j * np.angle(far_field))
+            slm_back = np.fft.fftshift(np.fft.ifft2(np.fft.ifftshift(constrained_far)))
+            phase = np.angle(slm_back)
+
+        phase_uint8 = np.mod(phase, 2.0 * np.pi) / (2.0 * np.pi) * 255.0
+        reconstructed = np.abs(np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(np.exp(1j * phase))))) ** 2
+        reconstructed /= max(float(np.max(reconstructed)), 1e-12)
+        return (
+            np.rint(phase_uint8).astype(np.uint8),
+            np.rint(target_intensity * 255.0).astype(np.uint8),
+            np.rint(reconstructed * 255.0).astype(np.uint8),
+        )
+
     @staticmethod
     def generate_phase(
         focus_mm,
@@ -1429,7 +1522,8 @@ def generate_phase():
 def generate_pattern(pattern_type):
     """
     生成SLM常见相位图
-    支持: fresnel, axicon, blaze, sine, vortex, random, divide
+    支持: fresnel, fresnel_three_spots, double_ring, axicon, blaze, sine,
+    vortex, random, divide, cross
     """
     try:
         data = request.json or {}
@@ -1441,6 +1535,7 @@ def generate_pattern(pattern_type):
         height = min(max(height, 64), 4096)
 
         # 根据类型生成相位图
+        target_array = None
         if pattern_type == 'fresnel':
             phase_array = SLMPatternGenerator.fresnel_lens(
                 width=width,
@@ -1480,6 +1575,37 @@ def generate_pattern(pattern_type):
                 f"fresnel_spots_f{focal_length:g}mm_"
                 f"w{wavelength:g}nm_n{spot_count}_d{spot_spacing:g}mm_"
                 f"{algorithm}_{phase_direction}"
+            )
+
+        elif pattern_type == 'double_ring':
+            inner_radius = float(data.get('inner_radius', 16.0))
+            outer_radius = float(data.get('outer_radius', 50.0))
+            inner_intensity = float(data.get('inner_intensity', 0.7))
+            outer_intensity = float(data.get('outer_intensity', 1.0))
+            between_intensity = float(data.get('between_intensity', 0.2))
+            inner_width = float(data.get('inner_width', data.get('w_in', inner_radius / 2.0)))
+            outer_width = float(data.get('outer_width', data.get('w_out', 10.0)))
+            iterations = int(data.get('iterations', 100))
+            seed = int(data.get('seed') or 2026)
+            phase_array, target_array, reconstructed_array = SLMPatternGenerator.double_ring_phase(
+                width=width,
+                height=height,
+                inner_radius=inner_radius,
+                outer_radius=outer_radius,
+                inner_intensity=inner_intensity,
+                outer_intensity=outer_intensity,
+                between_intensity=between_intensity,
+                inner_width=inner_width,
+                outer_width=outer_width,
+                iterations=iterations,
+                seed=seed,
+            )
+            target_preview = SLMPatternGenerator.array_to_base64(target_array)
+            regenerated_preview = SLMPatternGenerator.array_to_base64(reconstructed_array)
+            name = (
+                f"double_ring_ri{inner_radius:g}_ro{outer_radius:g}_"
+                f"wi{inner_width:g}_wo{outer_width:g}_"
+                f"ii{inner_intensity:g}_oi{outer_intensity:g}_bi{between_intensity:g}"
             )
 
         elif pattern_type == 'axicon':
@@ -1563,26 +1689,38 @@ def generate_pattern(pattern_type):
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         filename = f"{name}_{timestamp}.bmp"
         filepath = os.path.join(output_dir, filename)
-        SLMPatternGenerator.save_image(phase_array, filepath)
+        preview_only = pattern_type == 'double_ring' and bool(data.get('preview', False))
+        if not preview_only:
+            SLMPatternGenerator.save_image(phase_array, filepath)
+        else:
+            filename = None
+            filepath = None
 
-        # 记录历史
-        history = GenerationHistory(
-            config_name=name,
-            focus_mm=float(data.get('focal_length', 0)),
-            wavelength_nm=float(data.get('wavelength', 0)),
-            output_file=filepath
-        )
-        db.session.add(history)
-        db.session.commit()
+        # Automatic previews should not flood the persistent history table.
+        if not preview_only:
+            history = GenerationHistory(
+                config_name=name,
+                focus_mm=float(data.get('focal_length', 0)),
+                wavelength_nm=float(data.get('wavelength', 0)),
+                output_file=filepath
+            )
+            db.session.add(history)
+            db.session.commit()
 
-        return jsonify({
+        response = {
             'success': True,
             'image': img_base64,
             'filename': filename,
             'filepath': filepath,
             'pattern_type': pattern_type,
             'message': f'{pattern_type} 相位图生成成功'
-        })
+        }
+        if pattern_type == 'double_ring':
+            response.update({
+                'target_image': target_preview,
+                'reconstructed_image': regenerated_preview,
+            })
+        return jsonify(response)
 
     except Exception as e:
         import traceback

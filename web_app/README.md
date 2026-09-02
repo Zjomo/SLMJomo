@@ -205,6 +205,9 @@ POST /api/generate/<pattern_type>
 - `vortex` - 涡旋光束
 - `random` - 随机散斑
 - `divide` - 分屏图案
+- `double_ring` - 基于 `SLM_TEST.m` 的内圈高斯 + 外圈边缘反高斯复合光斑；返回 SLM 相位图、目标光强和重建光强预览
+
+`double_ring` 参数：`inner_radius`、`outer_radius`（像素半径），`inner_width`/`w_in`、`outer_width`/`w_out`（高斯宽度），`inner_intensity`、`outer_intensity`、`between_intensity`（0-1 光强），`iterations`（GS 迭代次数），以及 `width`、`height`。默认值对应 `SLM_TEST.m`：`R_max=50`、`w_in=8`、`w_out=10`、`I_outer=1`、`I_inner=0.7`、`I_flat=0.2`、`iterations=100`。实时预览请求可附带 `preview: true`，仅返回内存图像，不写入 BMP 或历史记录。
 
 ### CGH计算
 
@@ -280,6 +283,11 @@ convert_slm_size ✅ 通过
 ---
 
 ## 📝 版本历史
+
+### v3.3 Double-ring Beam Edition (2026-09-02)
+- 新增内圈高斯 + 外圈反高斯复合光斑相位图
+- 支持内外圈半径、圆心光强和环间光强调节
+- 新增前端即时目标光强预览、GS 相位图和重建光强预览
 
 ### v3.2 Gaussian Spots Edition (2026-07-29)
 - ✅ 新增 CGH 高斯光斑转换功能

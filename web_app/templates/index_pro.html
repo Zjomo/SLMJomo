@@ -45,6 +45,10 @@
                             <span class="icon">⋯</span>
                             <span>三点聚焦</span>
                         </li>
+                        <li onclick="scrollToSection('double-ring')">
+                            <span class="icon">◎</span>
+                            <span>内外圈复合光斑</span>
+                        </li>
                         <li onclick="scrollToSection('axicon')">
                             <span class="icon">🔺</span>
                             <span>轴棱锥透镜</span>
@@ -425,6 +429,52 @@
                 </section>
 
                 <!-- 轴棱锥透镜模块 -->
+                <section class="module-card" id="double-ring">
+                    <div class="module-header">
+                        <h2>◎ 内圈高斯 + 外圈反高斯相位图</h2>
+                        <div class="module-actions">
+                            <button class="btn-icon" onclick="toggleModule('double-ring')" title="折叠/展开">▣</button>
+                            <button class="btn-icon" onclick="resetModule('double-ring')" title="重置参数">↺</button>
+                        </div>
+                    </div>
+                    <div class="module-content">
+                        <div class="double-ring-layout">
+                            <div class="param-panel">
+                                <h3>环形几何参数</h3>
+                                <div class="param-item"><label><span class="param-label">内圈半径 (px)</span><input type="number" class="param-input" id="double_ring_inner_radius" value="16" min="2" max="1000" step="1" oninput="scheduleDoubleRingPreview()"><input type="range" class="param-slider" id="double_ring_inner_radius_slider" min="2" max="1000" step="1" value="16"></label></div>
+                                <div class="param-item"><label><span class="param-label">外圈峰值半径 R_max (px)</span><input type="number" class="param-input" id="double_ring_outer_radius" value="50" min="3" max="1000" step="1" oninput="scheduleDoubleRingPreview()"><input type="range" class="param-slider" id="double_ring_outer_radius_slider" min="3" max="1000" step="1" value="50"></label></div>
+                                <div class="param-item"><label><span class="param-label">内圈高斯宽度 w_in (px)</span><input type="number" class="param-input" id="double_ring_inner_width" value="8" min="0.5" max="1000" step="0.5" oninput="scheduleDoubleRingPreview()"><input type="range" class="param-slider" id="double_ring_inner_width_slider" min="0.5" max="1000" step="0.5" value="8"></label></div>
+                                <div class="param-item"><label><span class="param-label">外圈边缘宽度 w_out (px)</span><input type="number" class="param-input" id="double_ring_outer_width" value="10" min="0.5" max="1000" step="0.5" oninput="scheduleDoubleRingPreview()"><input type="range" class="param-slider" id="double_ring_outer_width_slider" min="0.5" max="1000" step="0.5" value="10"></label></div>
+                                <div class="param-item"><label><span class="param-label">内外圈之间光强 I_flat</span><input type="number" class="param-input" id="double_ring_between_intensity" value="0.2" min="0" max="1" step="0.01" oninput="scheduleDoubleRingPreview()"><input type="range" class="param-slider" id="double_ring_between_intensity_slider" min="0" max="1" step="0.01" value="0.2"></label></div>
+                            </div>
+                            <div class="param-panel">
+                                <h3>光强与算法</h3>
+                                <div class="param-item"><label><span class="param-label">内圈圆心光强 I_inner</span><input type="number" class="param-input" id="double_ring_inner_intensity" value="0.7" min="0" max="1" step="0.01" oninput="scheduleDoubleRingPreview()"><input type="range" class="param-slider" id="double_ring_inner_intensity_slider" min="0" max="1" step="0.01" value="0.7"></label></div>
+                                <div class="param-item"><label><span class="param-label">外圈峰值光强 I_outer</span><input type="number" class="param-input" id="double_ring_outer_intensity" value="1.0" min="0" max="1" step="0.01" oninput="scheduleDoubleRingPreview()"><input type="range" class="param-slider" id="double_ring_outer_intensity_slider" min="0" max="1" step="0.01" value="1"></label></div>
+                                <div class="param-item"><label><span class="param-label">GS 迭代次数</span><input type="number" class="param-input" id="double_ring_iterations" value="100" min="1" max="200" step="1" oninput="scheduleDoubleRingPreview()"></label></div>
+                            </div>
+                            <div class="param-panel">
+                                <h3>SLM 分辨率</h3>
+                                <div class="param-item"><label><span class="param-label">宽度 (px)</span><input type="number" class="param-input" id="double_ring_width" value="512" min="64" max="2048" step="1" oninput="scheduleDoubleRingPreview()"></label></div>
+                                <div class="param-item"><label><span class="param-label">高度 (px)</span><input type="number" class="param-input" id="double_ring_height" value="512" min="64" max="2048" step="1" oninput="scheduleDoubleRingPreview()"></label></div>
+                                <div class="hint-text">参数对应 SLM_TEST.m：R_max=50、w_in=8、w_out=10、I_outer=1、I_inner=0.7、I_flat=0.2。目标光强仅保留 R≤R_max 的圆形孔径。</div>
+                            </div>
+                        </div>
+                        <div class="double-ring-preview-grid">
+                            <div class="param-panel"><h3>目标光强分布</h3><div class="double-ring-image-box"><img id="double_ring_target_image" alt="目标双环光强"><span id="double_ring_target_placeholder">调整参数后自动预览</span></div></div>
+                            <div class="param-panel"><h3>SLM 相位图</h3><div class="double-ring-image-box"><img id="double_ring_phase_image" alt="SLM 相位图"><span id="double_ring_phase_placeholder">正在生成...</span></div></div>
+                            <div class="param-panel"><h3>重建光强</h3><div class="double-ring-image-box"><img id="double_ring_regenerated_image" alt="重建光强"><span id="double_ring_regenerated_placeholder">生成后显示</span></div></div>
+                        </div>
+                        <div class="action-bar">
+                            <button class="btn btn-primary" onclick="generateDoubleRing(true)"><span class="icon">◎</span> 生成双环相位图</button>
+                            <button class="btn btn-secondary" onclick="addCurrentToSequence()"><span class="icon">＋</span> 添加到序列</button>
+                            <button class="btn btn-secondary" onclick="showCurrentOnSLM()"><span class="icon">▣</span> 显示到 SLM</button>
+                            <button class="btn btn-download" onclick="downloadCurrentImage()" id="double_ring_download_btn" disabled><span class="icon">⇩</span> 下载 BMP</button>
+                        </div>
+                        <div class="double-ring-status" id="double_ring_status">就绪</div>
+                    </div>
+                </section>
+
                 <section class="module-card collapsed" id="axicon">
                     <div class="module-header">
                         <h2>🔺 轴棱锥透镜 (Axicon Lens)</h2>

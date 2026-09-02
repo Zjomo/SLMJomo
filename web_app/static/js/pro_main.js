@@ -40,6 +40,91 @@ function initializeApp() {
     initializeConverterUpload();
     toggleThreeSpotOptimization();
     initializeThreeSpotDammannInfo();
+    initializeDoubleRing();
+}
+
+function initializeDoubleRing() {
+    if (document.getElementById('double_ring_inner_radius')) {
+        initializeDoubleRingControls();
+        renderDoubleRingTargetPreview();
+        setTimeout(() => generateDoubleRing(false), 350);
+    }
+}
+
+function initializeDoubleRingControls() {
+    const pairs = [
+        ['double_ring_inner_radius', 'double_ring_inner_radius_slider'],
+        ['double_ring_outer_radius', 'double_ring_outer_radius_slider'],
+        ['double_ring_inner_width', 'double_ring_inner_width_slider'],
+        ['double_ring_outer_width', 'double_ring_outer_width_slider'],
+        ['double_ring_inner_intensity', 'double_ring_inner_intensity_slider'],
+        ['double_ring_outer_intensity', 'double_ring_outer_intensity_slider'],
+        ['double_ring_between_intensity', 'double_ring_between_intensity_slider']
+    ];
+    pairs.forEach(([inputId, sliderId]) => {
+        const input = document.getElementById(inputId);
+        const slider = document.getElementById(sliderId);
+        if (!input || !slider) return;
+        input.addEventListener('input', () => {
+            slider.value = input.value;
+            scheduleDoubleRingPreview();
+        });
+        slider.addEventListener('input', () => {
+            input.value = slider.value;
+            scheduleDoubleRingPreview();
+        });
+    });
+    ['double_ring_width', 'double_ring_height'].forEach(id => {
+        const input = document.getElementById(id);
+        if (input) input.addEventListener('input', () => {
+            updateDoubleRingRadiusLimits();
+            scheduleDoubleRingPreview();
+        });
+    });
+    updateDoubleRingRadiusLimits();
+    syncDoubleRingSliders();
+}
+
+function updateDoubleRingRadiusLimits() {
+    const width = parseInt(document.getElementById('double_ring_width')?.value, 10);
+    const height = parseInt(document.getElementById('double_ring_height')?.value, 10);
+    if (!Number.isFinite(width) || !Number.isFinite(height)) return;
+    const maxRadius = Math.max(2, Math.floor(Math.min(width, height) / 2));
+    const innerInput = document.getElementById('double_ring_inner_radius');
+    const outerInput = document.getElementById('double_ring_outer_radius');
+    const innerSlider = document.getElementById('double_ring_inner_radius_slider');
+    const outerSlider = document.getElementById('double_ring_outer_radius_slider');
+    if (innerInput) innerInput.max = Math.max(2, maxRadius - 1);
+    if (innerSlider) innerSlider.max = Math.max(2, maxRadius - 1);
+    if (outerInput) outerInput.max = maxRadius;
+    if (outerSlider) outerSlider.max = maxRadius;
+    if (outerInput && parseFloat(outerInput.value) > maxRadius) outerInput.value = maxRadius;
+    if (innerInput && parseFloat(innerInput.value) >= maxRadius) innerInput.value = Math.max(2, maxRadius - 1);
+
+    ['double_ring_inner_width', 'double_ring_outer_width'].forEach(id => {
+        const input = document.getElementById(id);
+        const slider = document.getElementById(`${id}_slider`);
+        if (input) input.max = maxRadius;
+        if (slider) slider.max = maxRadius;
+        if (input && parseFloat(input.value) > maxRadius) input.value = maxRadius;
+    });
+    syncDoubleRingSliders();
+}
+
+function syncDoubleRingSliders() {
+    [
+        ['double_ring_inner_radius', 'double_ring_inner_radius_slider'],
+        ['double_ring_outer_radius', 'double_ring_outer_radius_slider'],
+        ['double_ring_inner_width', 'double_ring_inner_width_slider'],
+        ['double_ring_outer_width', 'double_ring_outer_width_slider'],
+        ['double_ring_inner_intensity', 'double_ring_inner_intensity_slider'],
+        ['double_ring_outer_intensity', 'double_ring_outer_intensity_slider'],
+        ['double_ring_between_intensity', 'double_ring_between_intensity_slider']
+    ].forEach(([inputId, sliderId]) => {
+        const input = document.getElementById(inputId);
+        const slider = document.getElementById(sliderId);
+        if (input && slider) slider.value = input.value;
+    });
 }
 
 // ==================== 时间更新 ====================
@@ -302,6 +387,10 @@ async function generatePattern(patternType) {
             }
             break;
 
+        case 'double_ring':
+            params = getDoubleRingParams();
+            break;
+
         default:
             showNotification('不支持的图案类型: ' + patternType, 'error');
             showLoading(false);
@@ -345,6 +434,157 @@ async function generatePattern(patternType) {
 
 function addCurrentToSequence() {
     addToSequence();
+}
+
+function getDoubleRingParams() {
+    const value = id => parseFloat(document.getElementById(id).value);
+    return {
+        width: parseInt(document.getElementById('double_ring_width').value),
+        height: parseInt(document.getElementById('double_ring_height').value),
+        inner_radius: value('double_ring_inner_radius'),
+        outer_radius: value('double_ring_outer_radius'),
+        inner_width: value('double_ring_inner_width'),
+        outer_width: value('double_ring_outer_width'),
+        inner_intensity: value('double_ring_inner_intensity'),
+        outer_intensity: value('double_ring_outer_intensity'),
+        between_intensity: value('double_ring_between_intensity'),
+        iterations: parseInt(document.getElementById('double_ring_iterations').value),
+        seed: 2026
+    };
+}
+
+function renderDoubleRingTargetPreview() {
+    const targetImg = document.getElementById('double_ring_target_image');
+    const placeholder = document.getElementById('double_ring_target_placeholder');
+    if (!targetImg) return;
+
+    const params = getDoubleRingParams();
+    const width = Math.max(64, Math.min(parseInt(params.width, 10) || 512, 512));
+    const height = Math.max(64, Math.min(parseInt(params.height, 10) || 512, 512));
+    const inner = Number(params.inner_radius);
+    const outer = Number(params.outer_radius);
+    if (!Number.isFinite(inner) || !Number.isFinite(outer) || inner <= 0 || outer <= inner) {
+        targetImg.style.display = 'none';
+        if (placeholder) {
+            placeholder.textContent = '请将内圈半径设为小于外圈半径';
+            placeholder.style.display = 'block';
+        }
+        return;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    const pixels = ctx.createImageData(width, height);
+    const innerIntensity = Math.max(0, Math.min(1, Number(params.inner_intensity) || 0));
+    const outerIntensity = Math.max(0, Math.min(1, Number(params.outer_intensity) || 0));
+    const betweenIntensity = Math.max(0, Math.min(1, Number(params.between_intensity) || 0));
+    const innerWidth = Math.max(0.5, Number(params.inner_width) || inner / 2);
+    const outerWidth = Math.max(0.5, Number(params.outer_width) || 10);
+    const cx = (width - 1) / 2;
+    const cy = (height - 1) / 2;
+    const sx = width / Math.max(1, Number(params.width) || width);
+    const sy = height / Math.max(1, Number(params.height) || height);
+    const scale = Math.min(sx, sy);
+    const innerPx = inner * scale;
+    const outerPx = outer * scale;
+    const innerWidthPx = Math.max(innerWidth * scale, 0.5);
+    const outerWidthPx = Math.max(outerWidth * scale, 0.5);
+    const innerGateEdge = Math.max(innerWidthPx * 0.15, 0.75);
+    let maxValue = 0;
+    const values = new Float32Array(width * height);
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const radius = Math.hypot(x - cx, y - cy);
+            const inAperture = radius <= outerPx;
+            const innerGate = 1 / (1 + Math.exp((radius - innerPx) / innerGateEdge));
+            const innerShape = Math.exp(-0.5 * (radius / innerWidthPx) ** 2) * innerGate;
+            const outerShape = Math.exp(-0.5 * ((radius - outerPx) / outerWidthPx) ** 2);
+            const value = inAperture
+                ? Math.max(0, betweenIntensity
+                    + (innerIntensity - betweenIntensity) * innerShape
+                    + (outerIntensity - betweenIntensity) * outerShape)
+                : 0;
+            const index = y * width + x;
+            values[index] = value;
+            maxValue = Math.max(maxValue, value);
+        }
+    }
+    for (let i = 0; i < values.length; i++) {
+        const gray = Math.round((values[i] / Math.max(maxValue, 1e-9)) * 255);
+        const index = i * 4;
+        pixels.data[index] = gray;
+        pixels.data[index + 1] = gray;
+        pixels.data[index + 2] = gray;
+        pixels.data[index + 3] = 255;
+    }
+    ctx.putImageData(pixels, 0, 0);
+    targetImg.src = canvas.toDataURL('image/png');
+    targetImg.style.display = 'block';
+    if (placeholder) placeholder.style.display = 'none';
+}
+
+let doubleRingPreviewTimer = null;
+let doubleRingRequestSerial = 0;
+function scheduleDoubleRingPreview() {
+    renderDoubleRingTargetPreview();
+    const status = document.getElementById('double_ring_status');
+    if (status) status.textContent = '正在更新预览...';
+    clearTimeout(doubleRingPreviewTimer);
+    doubleRingPreviewTimer = setTimeout(() => generateDoubleRing(false), 280);
+}
+
+async function generateDoubleRing(manual = true) {
+    const requestSerial = ++doubleRingRequestSerial;
+    const params = getDoubleRingParams();
+    const inner = params.inner_radius;
+    const outer = params.outer_radius;
+    if (!Number.isFinite(inner) || !Number.isFinite(outer) || inner >= outer) {
+        const status = document.getElementById('double_ring_status');
+        if (status) status.textContent = '内圈半径必须小于外圈半径';
+        showNotification('内圈半径必须小于外圈半径', 'error');
+        return;
+    }
+    const phasePlaceholder = document.getElementById('double_ring_phase_placeholder');
+    if (phasePlaceholder) phasePlaceholder.textContent = '正在生成...';
+    try {
+        const response = await fetch('/api/generate/double_ring', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...params, preview: !manual })
+        });
+        const data = await response.json();
+        if (!data.success) throw new Error(data.error || 'Generation failed');
+        if (requestSerial !== doubleRingRequestSerial) return;
+        AppState.currentPatternType = 'double_ring';
+        AppState.currentImageData = {
+            image: data.image,
+            filename: data.filename || null,
+            filepath: data.filepath || null
+        };
+        const phaseImg = document.getElementById('double_ring_phase_image');
+        const targetImg = document.getElementById('double_ring_target_image');
+        const regeneratedImg = document.getElementById('double_ring_regenerated_image');
+        if (phaseImg) { phaseImg.src = data.image; phaseImg.style.display = 'block'; }
+        if (targetImg && data.target_image) { targetImg.src = data.target_image; targetImg.style.display = 'block'; }
+        if (regeneratedImg && data.reconstructed_image) { regeneratedImg.src = data.reconstructed_image; regeneratedImg.style.display = 'block'; }
+        ['double_ring_phase_placeholder', 'double_ring_target_placeholder', 'double_ring_regenerated_placeholder'].forEach(id => {
+            const el = document.getElementById(id); if (el) el.style.display = 'none';
+        });
+        displayPhaseImage(data.image);
+        const downloadBtn = document.getElementById('double_ring_download_btn');
+        if (downloadBtn) downloadBtn.disabled = !data.filename;
+        const status = document.getElementById('double_ring_status');
+        if (status) status.textContent = `已更新 ${new Date().toLocaleTimeString('zh-CN')}`;
+        updateParamInfo(params);
+        if (manual) { addToHistory(params); showNotification('双环相位图生成成功', 'success'); }
+    } catch (error) {
+        if (requestSerial !== doubleRingRequestSerial) return;
+        const status = document.getElementById('double_ring_status');
+        if (status) status.textContent = error.message;
+        if (manual) showNotification('双环相位图生成失败: ' + error.message, 'error');
+    }
 }
 
 function showCurrentOnSLM() {
@@ -472,6 +712,8 @@ function getCurrentParamsDescription() {
             return `g=${document.getElementById('divide_gray1').value}/${document.getElementById('divide_gray2').value}`;
         case 'cgh':
             return 'CGH pattern';
+        case 'double_ring':
+            return `Rin=${document.getElementById('double_ring_inner_radius').value}px, Rmax=${document.getElementById('double_ring_outer_radius').value}px, win=${document.getElementById('double_ring_inner_width').value}px, wout=${document.getElementById('double_ring_outer_width').value}px`;
         default:
             return 'custom pattern';
     }
@@ -618,6 +860,23 @@ function toggleModule(moduleId) {
 
 function resetModule(moduleId) {
     switch (moduleId) {
+        case 'double-ring':
+            document.getElementById('double_ring_inner_radius').value = 16;
+            document.getElementById('double_ring_outer_radius').value = 50;
+            document.getElementById('double_ring_inner_width').value = 8;
+            document.getElementById('double_ring_outer_width').value = 10;
+            document.getElementById('double_ring_inner_intensity').value = 0.7;
+            document.getElementById('double_ring_outer_intensity').value = 1.0;
+            document.getElementById('double_ring_between_intensity').value = 0.2;
+            document.getElementById('double_ring_iterations').value = 100;
+            document.getElementById('double_ring_width').value = 512;
+            document.getElementById('double_ring_height').value = 512;
+            updateDoubleRingRadiusLimits();
+            syncDoubleRingSliders();
+            scheduleDoubleRingPreview();
+            showNotification('Double-ring parameters reset', 'info');
+            break;
+
         case 'fresnel':
             document.getElementById('focus_mm').value = 1000;
             document.getElementById('wavelength_nm').value = 532;
