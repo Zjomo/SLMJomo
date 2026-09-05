@@ -40,7 +40,71 @@ function initializeApp() {
     initializeConverterUpload();
     toggleThreeSpotOptimization();
     initializeThreeSpotDammannInfo();
+    toggleThreeSpotOptimization('tsn');
+    initializeThreeSpotDammannInfo('tsn');
+    initializeCylindricalDiag();
     initializeDoubleRing();
+}
+
+function initializeCylindricalDiag() {
+    ['cylindrical_focal_length', 'cylindrical_wavelength', 'cylindrical_pixel_size',
+        'cylindrical_beam_diameter', 'cylindrical_width']
+        .forEach(id => {
+            const input = document.getElementById(id);
+            if (input) input.addEventListener('input', updateCylindricalDiag);
+        });
+    updateCylindricalDiag();
+}
+
+function updateCylindricalDiag() {
+    const fwhmOut = document.getElementById('cyl_diag_fwhm');
+    const fminOut = document.getElementById('cyl_diag_fmin');
+    const minWidthOut = document.getElementById('cyl_diag_min_width');
+    const adviceOut = document.getElementById('cyl_diag_advice');
+    if (!fwhmOut) return;
+
+    const focalLength = parseFloat(document.getElementById('cylindrical_focal_length').value);
+    const wavelength = parseFloat(document.getElementById('cylindrical_wavelength').value);
+    const pixelSize = parseFloat(document.getElementById('cylindrical_pixel_size').value);
+    const beamDiameter = parseFloat(document.getElementById('cylindrical_beam_diameter').value);
+    const width = parseInt(document.getElementById('cylindrical_width').value);
+
+    if (!(focalLength > 0) || !(wavelength > 0) || !(pixelSize > 0) || !(width > 0)) {
+        fwhmOut.textContent = fminOut.textContent = minWidthOut.textContent = adviceOut.textContent = '-';
+        return;
+    }
+
+    // 单位统一为 mm：λ nm→mm，像素 µm→mm
+    const lambdaMm = wavelength / 1e6;
+    const apertureMm = width * pixelSize / 1000;
+    const beam = beamDiameter > 0 ? beamDiameter : apertureMm;
+
+    // 高斯照明焦线宽度（强度 FWHM）：w = sqrt(2*ln2)*λf/(π*w0)，w0=1/e 振幅半径
+    const w0 = beam / 2;
+    const fwhmUm = Math.sqrt(2 * Math.log(2)) * lambdaMm * focalLength / (Math.PI * w0) * 1000;
+
+    // 采样极限：边缘条纹周期 ≥ 2 像素 → f_min = D_SLM·p/λ
+    const fMinMm = apertureMm * (pixelSize / 1000) / lambdaMm;
+
+    // 扩束到满口径后的极限线宽（受采样极限 f_min 约束）
+    const fForMin = Math.min(focalLength, fMinMm);
+    const minWidthUm = Math.sqrt(2 * Math.log(2)) * lambdaMm * fForMin / (Math.PI * apertureMm / 2) * 1000;
+
+    fwhmOut.textContent = `${fwhmUm.toFixed(1)} µm`;
+    fminOut.textContent = `${fMinMm.toFixed(0)} mm`;
+    minWidthOut.textContent = `${minWidthUm.toFixed(1)} µm`;
+
+    let advice;
+    if (focalLength < fMinMm) {
+        advice = `焦距低于混叠极限 ${fMinMm.toFixed(0)} mm，边缘相位欠采样会使焦线变差，请增大焦距`;
+    } else if (beam < apertureMm * 0.9) {
+        advice = `扩束到 ${apertureMm.toFixed(1)} mm（满口径）可将焦线细至约 ${minWidthUm.toFixed(1)} µm`;
+    } else if (focalLength > fMinMm * 1.5) {
+        advice = `焦距已接近下限，线宽约 ${minWidthUm.toFixed(1)} µm 已接近纯相位极限，更细需真实柱面透镜`;
+    } else {
+        advice = `参数已接近最优，焦线宽度约 ${fwhmUm.toFixed(1)} µm`;
+    }
+    adviceOut.textContent = advice;
 }
 
 function initializeDoubleRing() {
@@ -319,11 +383,38 @@ async function generatePattern(patternType) {
             };
             break;
 
+        case 'three_spots':
+            params = {
+                focal_length: parseFloat(document.getElementById('tsn_focus').value),
+                wavelength: parseFloat(document.getElementById('tsn_wavelength').value),
+                spot_spacing: parseFloat(document.getElementById('tsn_spacing').value),
+                spot_count: parseInt(document.getElementById('tsn_count').value),
+                pixel_size_um: parseFloat(document.getElementById('tsn_pixel_size').value),
+                algorithm: document.getElementById('tsn_algorithm').value,
+                incident_beam_diameter_mm: parseFloat(document.getElementById('tsn_beam_diameter').value),
+                iterations: parseInt(document.getElementById('tsn_iterations').value),
+                phase_direction: document.getElementById('tsn_phase_direction').value,
+                width: parseInt(document.getElementById('tsn_width').value),
+                height: parseInt(document.getElementById('tsn_height').value)
+            };
+            break;
+
         case 'axicon':
             params = {
                 radius: parseFloat(document.getElementById('axicon_radius').value),
                 width: parseInt(document.getElementById('axicon_width').value),
                 height: parseInt(document.getElementById('axicon_height').value)
+            };
+            break;
+
+        case 'cylindrical':
+            params = {
+                focal_length: parseFloat(document.getElementById('cylindrical_focal_length').value),
+                wavelength: parseFloat(document.getElementById('cylindrical_wavelength').value),
+                pixel_size: parseFloat(document.getElementById('cylindrical_pixel_size').value) / 1000,
+                angle: parseFloat(document.getElementById('cylindrical_angle').value),
+                width: parseInt(document.getElementById('cylindrical_width').value),
+                height: parseInt(document.getElementById('cylindrical_height').value)
             };
             break;
 
@@ -418,7 +509,9 @@ async function generatePattern(patternType) {
 
             const patternLabel = patternType === 'fresnel_three_spots'
                 ? '多点聚焦'
-                : patternType;
+                : patternType === 'three_spots'
+                    ? '三点聚焦（无透镜）'
+                    : patternType;
             showNotification(`${patternLabel} 相位图生成成功`, 'success');
             addToHistory(params);
         } else {
@@ -655,7 +748,7 @@ function updatePhaseProfile(imageData) {
 function updateParamInfo(params) {
     const type = AppState.currentPatternType || 'fresnel';
 
-    if (type === 'fresnel' || type === 'fresnel_three_spots') {
+    if (type === 'fresnel' || type === 'fresnel_three_spots' || type === 'three_spots') {
         document.getElementById('info_focus').textContent = (params.focus_mm || params.focal_length) + ' mm';
         document.getElementById('info_wavelength').textContent = (params.wavelength_nm || params.wavelength) + ' nm';
     } else {
@@ -698,6 +791,8 @@ function getCurrentParamsDescription() {
             return `f=${document.getElementById('focus_mm').value}mm, λ=${document.getElementById('wavelength_nm').value}nm`;
         case 'fresnel_three_spots':
             return `${document.getElementById('three_spot_count').value}点, f=${document.getElementById('three_spot_focus').value}mm, d=${document.getElementById('three_spot_spacing').value}mm`;
+        case 'three_spots':
+            return `${document.getElementById('tsn_count').value}点, f=${document.getElementById('tsn_focus').value}mm, d=${document.getElementById('tsn_spacing').value}mm, 无透镜`;
         case 'axicon':
             return `r=${document.getElementById('axicon_radius').value}px`;
         case 'blaze':
@@ -905,11 +1000,39 @@ function resetModule(moduleId) {
             showNotification('多点聚焦参数已重置', 'info');
             break;
 
+        case 'three-spots-no-lens':
+            document.getElementById('tsn_focus').value = 1000;
+            document.getElementById('tsn_wavelength').value = 532;
+            document.getElementById('tsn_spacing').value = 1.0;
+            document.getElementById('tsn_count').value = 3;
+            document.getElementById('tsn_pixel_size').value = 12.5;
+            document.getElementById('tsn_algorithm').value = 'uniform_grating';
+            document.getElementById('tsn_beam_diameter').value = 10.0;
+            document.getElementById('tsn_iterations').value = 30;
+            document.getElementById('tsn_phase_direction').value = 'standard';
+            document.getElementById('tsn_width').value = 1272;
+            document.getElementById('tsn_height').value = 1024;
+            toggleThreeSpotOptimization('tsn');
+            showNotification('三点聚焦（无透镜）参数已重置', 'info');
+            break;
+
         case 'axicon':
             document.getElementById('axicon_radius').value = 100;
             document.getElementById('axicon_width').value = 512;
             document.getElementById('axicon_height').value = 512;
             showNotification('轴棱锥透镜参数已重置', 'info');
+            break;
+
+        case 'cylindrical':
+            document.getElementById('cylindrical_focal_length').value = 1000;
+            document.getElementById('cylindrical_wavelength').value = 532;
+            document.getElementById('cylindrical_pixel_size').value = 12.5;
+            document.getElementById('cylindrical_beam_diameter').value = 10.0;
+            document.getElementById('cylindrical_angle').value = 0;
+            document.getElementById('cylindrical_width').value = 1272;
+            document.getElementById('cylindrical_height').value = 1024;
+            updateCylindricalDiag();
+            showNotification('柱面透镜参数已重置', 'info');
             break;
 
         case 'blaze':
@@ -1157,22 +1280,22 @@ function toggleSpotRadiusInput() {
     }
 }
 
-function toggleThreeSpotOptimization() {
-    const algorithm = document.getElementById('three_spot_algorithm');
-    const optimization = document.getElementById('three_spot_optimization_params');
-    const iterations = document.getElementById('three_spot_iterations_container');
-    const dammann = document.getElementById('three_spot_dammann_params');
-    const uniform = document.getElementById('three_spot_uniform_params');
+function toggleThreeSpotOptimization(prefix = 'three_spot') {
+    const algorithm = document.getElementById(prefix + '_algorithm');
+    const optimization = document.getElementById(prefix + '_optimization_params');
+    const iterations = document.getElementById(prefix + '_iterations_container');
+    const dammann = document.getElementById(prefix + '_dammann_params');
+    const uniform = document.getElementById(prefix + '_uniform_params');
     if (!algorithm || !optimization || !iterations || !dammann || !uniform) return;
 
-    const spotCount = parseInt(document.getElementById('three_spot_count').value);
+    const spotCount = parseInt(document.getElementById(prefix + '_count').value);
     const dammannOption = algorithm.querySelector('option[value="dammann"]');
     dammannOption.disabled = spotCount !== 3;
     if (algorithm.value === 'dammann' && spotCount !== 3) {
         algorithm.value = 'uniform_grating';
     }
 
-    const targetPreview = document.querySelector('.three-spot-target');
+    const targetPreview = document.getElementById(prefix + '_target');
     if (targetPreview && Number.isInteger(spotCount) && spotCount >= 2 && spotCount <= 15) {
         targetPreview.innerHTML = '<span></span>'.repeat(spotCount);
         targetPreview.setAttribute('aria-label', `${spotCount} 个水平等间距焦点`);
@@ -1183,27 +1306,27 @@ function toggleThreeSpotOptimization() {
     iterations.style.display = algorithm.value === 'gaussian_wgs' ? 'block' : 'none';
     dammann.style.display = algorithm.value === 'dammann' ? 'block' : 'none';
     uniform.style.display = algorithm.value === 'uniform_grating' ? 'block' : 'none';
-    updateThreeSpotDammannInfo();
+    updateThreeSpotDammannInfo(prefix);
 }
 
-function initializeThreeSpotDammannInfo() {
-    ['three_spot_focus', 'three_spot_wavelength', 'three_spot_spacing',
-        'three_spot_pixel_size', 'three_spot_width', 'three_spot_count']
+function initializeThreeSpotDammannInfo(prefix = 'three_spot') {
+    [prefix + '_focus', prefix + '_wavelength', prefix + '_spacing',
+        prefix + '_pixel_size', prefix + '_width', prefix + '_count']
         .forEach(id => {
             const input = document.getElementById(id);
-            if (input) input.addEventListener('input', updateThreeSpotDammannInfo);
+            if (input) input.addEventListener('input', () => updateThreeSpotDammannInfo(prefix));
         });
 }
 
-function updateThreeSpotDammannInfo() {
-    const output = document.getElementById('three_spot_dammann_period');
+function updateThreeSpotDammannInfo(prefix = 'three_spot') {
+    const output = document.getElementById(prefix + '_dammann_period');
     if (!output) return;
-    const focalLength = parseFloat(document.getElementById('three_spot_focus').value);
-    const wavelength = parseFloat(document.getElementById('three_spot_wavelength').value);
-    const spacing = parseFloat(document.getElementById('three_spot_spacing').value);
-    const pixelSize = parseFloat(document.getElementById('three_spot_pixel_size').value);
-    const width = parseInt(document.getElementById('three_spot_width').value);
-    const spotCount = parseInt(document.getElementById('three_spot_count').value);
+    const focalLength = parseFloat(document.getElementById(prefix + '_focus').value);
+    const wavelength = parseFloat(document.getElementById(prefix + '_wavelength').value);
+    const spacing = parseFloat(document.getElementById(prefix + '_spacing').value);
+    const pixelSize = parseFloat(document.getElementById(prefix + '_pixel_size').value);
+    const width = parseInt(document.getElementById(prefix + '_width').value);
+    const spotCount = parseInt(document.getElementById(prefix + '_count').value);
     const periodPixels = wavelength * focalLength / (1000 * spacing * pixelSize);
     output.textContent = Number.isFinite(periodPixels)
         ? `${periodPixels.toFixed(2)} 像素 / 周期`
@@ -1220,7 +1343,7 @@ function updateThreeSpotDammannInfo() {
     }
     const actualSpacing = cycles * outputStep;
     const uniformPeriod = width / cycles;
-    const uniformInfo = document.getElementById('three_spot_uniform_sampling');
+    const uniformInfo = document.getElementById(prefix + '_uniform_sampling');
     if (uniformInfo && Number.isFinite(actualSpacing)) {
         uniformInfo.textContent = `${actualSpacing.toFixed(4)} mm；${uniformPeriod.toFixed(2)} 像素 / 周期`;
     }

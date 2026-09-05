@@ -45,6 +45,10 @@
                             <span class="icon">⋯</span>
                             <span>三点聚焦</span>
                         </li>
+                        <li onclick="scrollToSection('three-spots-no-lens')">
+                            <span class="icon">⋯</span>
+                            <span>三点聚焦（无透镜）</span>
+                        </li>
                         <li onclick="scrollToSection('double-ring')">
                             <span class="icon">◎</span>
                             <span>内外圈复合光斑</span>
@@ -52,6 +56,10 @@
                         <li onclick="scrollToSection('axicon')">
                             <span class="icon">🔺</span>
                             <span>轴棱锥透镜</span>
+                        </li>
+                        <li onclick="scrollToSection('cylindrical')">
+                            <span class="icon">📶</span>
+                            <span>柱面透镜</span>
                         </li>
                         <li onclick="scrollToSection('blaze')">
                             <span class="icon">🔷</span>
@@ -147,8 +155,8 @@
                                 <div class="param-item">
                                     <label>
                                         <span class="param-label">焦距 (mm)</span>
-                                        <input type="number" class="param-input" id="focus_mm" value="1000" min="100" max="5000" step="10">
-                                        <input type="range" class="param-slider" id="focus_slider" min="100" max="5000" value="1000" step="10">
+                                        <input type="number" class="param-input" id="focus_mm" value="1000" min="100" max="98000" step="10">
+                                        <input type="range" class="param-slider" id="focus_slider" min="100" max="98000" value="1000" step="10">
                                     </label>
                                 </div>
 
@@ -169,8 +177,8 @@
                                     <label>
                                         <span class="param-label">像素间距</span>
                                         <select class="param-select" id="pitch_mode">
-                                            <option value="1" selected>1.25 μm (高分辨率)</option>
-                                            <option value="0">20 μm (标准)</option>
+                                            <option value="1" selected>12.5 μm (X15223 实际)</option>
+                                            <option value="0">20 μm (偏大)</option>
                                         </select>
                                     </label>
                                 </div>
@@ -327,7 +335,7 @@
 
                             <div class="param-panel">
                                 <h3>焦点阵列</h3>
-                                <div class="three-spot-target" aria-label="三个水平等间距焦点">
+                                <div class="three-spot-target" id="three_spot_target" aria-label="三个水平等间距焦点">
                                     <span></span><span></span><span></span>
                                 </div>
                                 <div class="param-item">
@@ -422,6 +430,156 @@
                                 <span class="icon">📺</span> 显示到 SLM
                             </button>
                             <button class="btn btn-download" onclick="downloadCurrentImage()" id="fresnel_three_spots_download_btn" disabled>
+                                <span class="icon">💾</span> 下载图像
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 三点聚焦（无透镜）模块 -->
+                <section class="module-card collapsed" id="three-spots-no-lens">
+                    <div class="module-header">
+                        <h2>⋯ 三点聚焦（无透镜）</h2>
+                        <div class="module-actions">
+                            <button class="btn-icon" onclick="toggleModule('three-spots-no-lens')" title="折叠/展开">📂</button>
+                            <button class="btn-icon" onclick="resetModule('three-spots-no-lens')" title="重置参数">🔄</button>
+                        </div>
+                    </div>
+                    <div class="module-content">
+                        <div class="control-grid">
+                            <div class="param-panel">
+                                <h3>光学参数</h3>
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">等效焦距 (mm，决定分束角)</span>
+                                        <input type="number" class="param-input" id="tsn_focus" value="1000" min="1" max="10000" step="10">
+                                    </label>
+                                </div>
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">波长 (nm)</span>
+                                        <input type="number" class="param-input" id="tsn_wavelength" value="532" min="200" max="2000" step="1">
+                                    </label>
+                                </div>
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">生成算法</span>
+                                        <select class="param-select" id="tsn_algorithm" onchange="toggleThreeSpotOptimization('tsn')">
+                                            <option value="uniform_grating" selected>通用等强光栅（照明鲁棒）</option>
+                                            <option value="gaussian_wgs">高斯优化（指定光束）</option>
+                                            <option value="dammann">1×3 达曼光栅（快速）</option>
+                                            <option value="analytic">标准分束（光路诊断）</option>
+                                        </select>
+                                    </label>
+                                </div>
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">相位方向</span>
+                                        <select class="param-select" id="tsn_phase_direction">
+                                            <option value="standard" selected>标准会聚</option>
+                                            <option value="inverted">反相（LUT 方向相反）</option>
+                                        </select>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="param-panel">
+                                <h3>焦点阵列</h3>
+                                <div class="three-spot-target" id="tsn_target" aria-label="三个水平等间距焦点">
+                                    <span></span><span></span><span></span>
+                                </div>
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">光斑数量 n</span>
+                                        <input type="number" class="param-input" id="tsn_count" value="3" min="2" max="15" step="1" oninput="toggleThreeSpotOptimization('tsn')">
+                                    </label>
+                                </div>
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">相邻点间距 (mm)</span>
+                                        <input type="number" class="param-input" id="tsn_spacing" value="1.0" min="0.01" max="20" step="0.05">
+                                    </label>
+                                </div>
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">SLM 像素尺寸 (µm)</span>
+                                        <input type="number" class="param-input" id="tsn_pixel_size" value="12.5" min="0.1" max="100" step="0.1">
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="param-panel">
+                                <h3>图像参数</h3>
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">宽度 (像素)</span>
+                                        <input type="number" class="param-input" id="tsn_width" value="1272" min="64" max="4096">
+                                    </label>
+                                </div>
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">高度 (像素)</span>
+                                        <input type="number" class="param-input" id="tsn_height" value="1024" min="64" max="4096">
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="param-panel" id="tsn_optimization_params">
+                                <h3>入射光束与优化</h3>
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">入射光束 1/e² 直径 (mm)</span>
+                                        <input type="number" class="param-input" id="tsn_beam_diameter" value="10.0" min="0.1" max="100" step="0.1">
+                                    </label>
+                                </div>
+                                <div class="param-item" id="tsn_iterations_container">
+                                    <label>
+                                        <span class="param-label">优化迭代次数</span>
+                                        <input type="number" class="param-input" id="tsn_iterations" value="30" min="1" max="200" step="1">
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="param-panel" id="tsn_dammann_params" style="display: none;">
+                                <h3>达曼光栅参数</h3>
+                                <div class="param-item">
+                                    <span class="param-label">自动计算周期</span>
+                                    <strong id="tsn_dammann_period">-</strong>
+                                </div>
+                                <div class="param-item">
+                                    <span class="param-label">π 相位区域宽度</span>
+                                    <strong>26.474% / 周期</strong>
+                                </div>
+                                <div class="param-item">
+                                    <span class="param-label">三束理论总效率</span>
+                                    <strong>约 66.4%</strong>
+                                </div>
+                            </div>
+
+                            <div class="param-panel" id="tsn_uniform_params">
+                                <h3>官方模拟采样对齐</h3>
+                                <div class="param-item">
+                                    <span class="param-label">实际间距；等效周期</span>
+                                    <strong id="tsn_uniform_sampling">-</strong>
+                                </div>
+                                <div class="param-item">
+                                    <span class="param-label">照明变化行为</span>
+                                    <strong>各光斑同步缩放并保持等强高斯分布</strong>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="action-bar">
+                            <button class="btn btn-primary" onclick="generatePattern('three_spots')">
+                                <span class="icon">⋯</span> 生成三点分束相位图
+                            </button>
+                            <button class="btn btn-secondary" onclick="addCurrentToSequence()">
+                                <span class="icon">➕</span> 添加到序列
+                            </button>
+                            <button class="btn btn-secondary" onclick="showCurrentOnSLM()">
+                                <span class="icon">📺</span> 显示到 SLM
+                            </button>
+                            <button class="btn btn-download" onclick="downloadCurrentImage()" id="three_spots_download_btn" disabled>
                                 <span class="icon">💾</span> 下载图像
                             </button>
                         </div>
@@ -531,6 +689,116 @@
                         </div>
                     </div>
                 </section>
+
+                <!-- 柱面透镜模块 -->
+                <section class="module-card collapsed" id="cylindrical">
+                    <div class="module-header">
+                        <h2>📶 柱面透镜 (Cylindrical Lens)</h2>
+                        <div class="module-actions">
+                            <button class="btn-icon" onclick="toggleModule('cylindrical')" title="折叠/展开">📂</button>
+                            <button class="btn-icon" onclick="resetModule('cylindrical')" title="重置参数">🔄</button>
+                        </div>
+                    </div>
+                    <div class="module-content">
+                        <div class="control-grid">
+                            <div class="param-panel">
+                                <h3>基础参数</h3>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">焦距 Focal Length（mm，正会聚/负发散）</span>
+                                        <input type="number" class="param-input" id="cylindrical_focal_length" value="1000" step="1">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">波长 Wavelength（nm）</span>
+                                        <input type="number" class="param-input" id="cylindrical_wavelength" value="532" min="1" step="1">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">柱面轴旋转角 Angle（°）</span>
+                                        <input type="number" class="param-input" id="cylindrical_angle" value="0" min="0" max="180" step="1">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">SLM 像素尺寸 Pixel Size（µm）</span>
+                                        <input type="number" class="param-input" id="cylindrical_pixel_size" value="12.5" min="0.1" max="100" step="0.1">
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="param-panel">
+                                <h3>入射光与图像</h3>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">光束 1/e 直径 Beam Diameter（mm，0=满口径）</span>
+                                        <input type="number" class="param-input" id="cylindrical_beam_diameter" value="10.0" min="0" max="100" step="0.5">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">宽度（像素）</span>
+                                        <input type="number" class="param-input" id="cylindrical_width" value="1272" min="64" max="4096">
+                                    </label>
+                                </div>
+
+                                <div class="param-item">
+                                    <label>
+                                        <span class="param-label">高度（像素）</span>
+                                        <input type="number" class="param-input" id="cylindrical_height" value="1024" min="64" max="4096">
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="param-panel">
+                                <h3>焦线宽度诊断（实时计算）</h3>
+                                <div class="param-item">
+                                    <span class="param-label">理论焦线宽度（高斯 FWHM）</span>
+                                    <strong id="cyl_diag_fwhm">-</strong>
+                                </div>
+                                <div class="param-item">
+                                    <span class="param-label">混叠极限焦距 f_min（低于会边缘采样不足）</span>
+                                    <strong id="cyl_diag_fmin">-</strong>
+                                </div>
+                                <div class="param-item">
+                                    <span class="param-label">扩束后的极限线宽（光束=口径时）</span>
+                                    <strong id="cyl_diag_min_width">-</strong>
+                                </div>
+                                <div class="param-item">
+                                    <span class="param-label">优化建议</span>
+                                    <strong id="cyl_diag_advice">-</strong>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="action-bar">
+                            <button class="btn btn-primary" onclick="generatePattern('cylindrical')">
+                                <span class="icon">🎨</span> 生成柱面透镜
+                            </button>
+                            <button class="btn btn-secondary" onclick="addCurrentToSequence()">
+                                <span class="icon">➕</span> 添加到序列
+                            </button>
+                            <button class="btn btn-secondary" onclick="showCurrentOnSLM()">
+                                <span class="icon">📺</span> 显示到SLM
+                            </button>
+                            <button class="btn btn-download" onclick="downloadCurrentImage()" id="cylindrical_download_btn" disabled>
+                                <span class="icon">💾</span> 下载图像
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 超振荡焦线模块已移除：数值验证表明纯相位+固定照明的
+                     单焦线以透镜为最优（任何相位扰动降低中心能量），
+                     焦线宽度诊断整合在柱面透镜模块中 -->
 
                 <!-- 闪耀光栅模块 -->
                 <section class="module-card collapsed" id="blaze">

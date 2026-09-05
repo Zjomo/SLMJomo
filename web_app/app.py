@@ -141,7 +141,7 @@ class SLMPatternGenerator:
         height=1024,
         focal_length=1000,
         wavelength=532,
-        pixel_size=25e-3,
+        pixel_size=12.5e-3,  # Hamamatsu X15223: 12.5 um (LEJ-B60004-4)
         **kwargs
     ):
         """
@@ -151,7 +151,7 @@ class SLMPatternGenerator:
         参数:
             focal_length: 焦距（mm），正数为会聚，负数为发散
             wavelength: 波长（nm）
-            pixel_size: 像素尺寸（mm），默认25μm
+            pixel_size: 像素尺寸（mm），默认12.5μm
         """
         wavelength_mm = wavelength / 1e6  # nm -> mm
 
@@ -177,6 +177,49 @@ class SLMPatternGenerator:
 
         return phase.astype(np.uint8)
 
+    # ------------------- 1b. 柱面透镜 -------------------
+    @staticmethod
+    def cylindrical_lens(
+        width=1272,
+        height=1024,
+        focal_length=1000,
+        wavelength=532,
+        pixel_size=25e-3,
+        angle=0,
+        **kwargs
+    ):
+        """
+        柱面透镜相位图：单轴二次相位，产生焦线
+        参考: fresnellens.m 的一维形式
+
+        参数:
+            focal_length: 焦距（mm），正数为会聚，负数为发散
+            wavelength: 波长（nm）
+            pixel_size: 像素尺寸（mm），默认25μm
+            angle: 柱面轴旋转角（°），0=沿x轴聚焦
+        """
+        wavelength_mm = wavelength / 1e6  # nm -> mm
+
+        # 坐标网格
+        x = np.arange(width) - width / 2
+        y = np.arange(height) - height / 2
+        X, Y = np.meshgrid(x, y)
+
+        # 旋转坐标以控制柱面轴向
+        theta = np.radians(angle)
+        X_rot = X * np.cos(theta) + Y * np.sin(theta)
+
+        # 一维二次相位（抛物线近似）
+        phase = -np.pi * (X_rot * pixel_size) ** 2 / (wavelength_mm * focal_length)
+        phase = np.mod(phase, 2 * np.pi)
+        phase = phase / (2 * np.pi) * 255
+
+        # 焦距为正时取反（会聚透镜）
+        if focal_length > 0:
+            phase = 255 - phase
+
+        return phase.astype(np.uint8)
+
     @staticmethod
     def fresnel_three_spots(
         width=1272,
@@ -190,6 +233,7 @@ class SLMPatternGenerator:
         incident_beam_diameter_mm=10.0,
         iterations=30,
         phase_direction='standard',
+        with_lens=True,
         **kwargs
     ):
         """Generate a phase-only Fresnel hologram for three horizontal focal spots.
@@ -199,6 +243,9 @@ class SLMPatternGenerator:
         are supported.
         All physical distances are expressed in millimetres except wavelength
         and pixel_size_um.
+
+        with_lens=False 时去掉透镜相位项，仅生成分束光栅
+        （配合外部光学系统或远场衍射使用）。
         """
         if focal_length <= 0:
             raise ValueError("焦距必须大于 0 mm")
@@ -246,7 +293,8 @@ class SLMPatternGenerator:
                 spot_spacing=spot_spacing,
                 spot_count=spot_count,
                 incident_beam_diameter_mm=incident_beam_diameter_mm,
-                iterations=iterations
+                iterations=iterations,
+                with_lens=with_lens
             )
         elif algorithm == 'uniform_grating':
             phase = SLMPatternGenerator._uniform_spot_grating_phase(
@@ -256,7 +304,8 @@ class SLMPatternGenerator:
                 wavelength_mm=wavelength_mm,
                 pixel_size_mm=pixel_size_mm,
                 spot_spacing=spot_spacing,
-                spot_count=spot_count
+                spot_count=spot_count,
+                with_lens=with_lens
             )
         elif algorithm == 'dammann':
             if spot_count != 3:
@@ -268,7 +317,8 @@ class SLMPatternGenerator:
                 wavelength_mm=wavelength_mm,
                 pixel_size_mm=pixel_size_mm,
                 spot_spacing=spot_spacing,
-                incident_beam_diameter_mm=incident_beam_diameter_mm
+                incident_beam_diameter_mm=incident_beam_diameter_mm,
+                with_lens=with_lens
             )
         else:
             field = np.zeros((height, width), dtype=np.complex128)
@@ -278,13 +328,20 @@ class SLMPatternGenerator:
             target_weights = np.ones(spot_count)
             if spot_count == 3:
                 target_weights[1] = 1.085
-            for target_x, weight in zip(target_positions, target_weights):
-                optical_path = np.sqrt(
-                    (X - target_x) ** 2 + Y ** 2 + focal_length ** 2
-                )
-                field += weight * np.exp(
-                    -1j * k * (optical_path - focal_length)
-                )
+            if with_lens:
+                for target_x, weight in zip(target_positions, target_weights):
+                    optical_path = np.sqrt(
+                        (X - target_x) ** 2 + Y ** 2 + focal_length ** 2
+                    )
+                    field += weight * np.exp(
+                        -1j * k * (optical_path - focal_length)
+                    )
+            else:
+                # 无透镜：抛物线近似的远场分束（纯线性相位光栅）
+                for target_x, weight in zip(target_positions, target_weights):
+                    field += weight * np.exp(
+                        1j * k * X * target_x / focal_length
+                    )
             phase = np.angle(field)
 
         if phase_direction == 'inverted':
@@ -301,7 +358,8 @@ class SLMPatternGenerator:
         wavelength_mm,
         pixel_size_mm,
         spot_spacing,
-        spot_count
+        spot_count,
+        with_lens=True
     ):
         """Replicate an input beam into equal consecutive diffraction orders."""
         width = X.shape[1]
@@ -331,6 +389,8 @@ class SLMPatternGenerator:
             cell_coordinate = np.mod(cycles * column / (2 * width), 1.0)
         cell_index = np.floor(cell_coordinate * len(cell_phase)).astype(int)
         grating_phase = cell_phase[cell_index][np.newaxis, :]
+        if not with_lens:
+            return np.broadcast_to(grating_phase, X.shape)
         lens_phase = -np.pi * (X**2 + Y**2) / (
             wavelength_mm * focal_length
         )
@@ -394,7 +454,8 @@ class SLMPatternGenerator:
         wavelength_mm,
         pixel_size_mm,
         spot_spacing,
-        incident_beam_diameter_mm
+        incident_beam_diameter_mm,
+        with_lens=True
     ):
         """Create an equal-order 1x3 binary Dammann grating plus a lens."""
         period_mm = wavelength_mm * focal_length / spot_spacing
@@ -438,6 +499,8 @@ class SLMPatternGenerator:
                 best_binary_row = binary_row
 
         grating_phase = np.where(best_binary_row[np.newaxis, :], np.pi, 0.0)
+        if not with_lens:
+            return np.broadcast_to(grating_phase, X.shape)
         lens_phase = -np.pi * (X**2 + Y**2) / (
             wavelength_mm * focal_length
         )
@@ -455,7 +518,8 @@ class SLMPatternGenerator:
         spot_spacing,
         spot_count,
         incident_beam_diameter_mm,
-        iterations
+        iterations,
+        with_lens=True
     ):
         """Optimize three equal-power Gaussian spots in the focal plane."""
         beam_radius = incident_beam_diameter_mm / 2
@@ -550,6 +614,8 @@ class SLMPatternGenerator:
             )
             hologram_phase = np.angle(back_field)
 
+        if not with_lens:
+            return hologram_phase
         lens_phase = -np.pi * (X**2 + Y**2) / (
             wavelength_mm * focal_length
         )
@@ -904,7 +970,7 @@ class SLMPatternGenerator:
         """
         兼容旧版的菲涅尔透镜相位图生成
         """
-        pitch = 20e-6 if pitch_mode == 0 else 1.25e-6
+        pitch = 20e-6 if pitch_mode == 0 else 12.5e-6  # X15223 actual: 12.5 um
         focus_m = focus_mm * 1e-3
         wavelength_m = wavelength_nm * 1e-9
 
@@ -1522,8 +1588,8 @@ def generate_phase():
 def generate_pattern(pattern_type):
     """
     生成SLM常见相位图
-    支持: fresnel, fresnel_three_spots, double_ring, axicon, blaze, sine,
-    vortex, random, divide, cross
+    支持: fresnel, fresnel_three_spots, three_spots, double_ring, axicon,
+    cylindrical, blaze, sine, vortex, random, divide, cross
     """
     try:
         data = request.json or {}
@@ -1542,7 +1608,7 @@ def generate_pattern(pattern_type):
                 height=height,
                 focal_length=float(data.get('focal_length', 1000)),
                 wavelength=float(data.get('wavelength', 532)),
-                pixel_size=float(data.get('pixel_size', 25e-3))
+                pixel_size=float(data.get('pixel_size', 12.5e-3))
             )
             name = f"fresnel_f{data.get('focal_length', 1000)}mm_w{data.get('wavelength', 532)}nm"
 
@@ -1573,6 +1639,39 @@ def generate_pattern(pattern_type):
             )
             name = (
                 f"fresnel_spots_f{focal_length:g}mm_"
+                f"w{wavelength:g}nm_n{spot_count}_d{spot_spacing:g}mm_"
+                f"{algorithm}_{phase_direction}"
+            )
+
+        elif pattern_type == 'three_spots':
+            # 与菲涅尔多点聚焦相同参数，但不含菲涅尔透镜相位（纯分束光栅）
+            focal_length = float(data.get('focal_length', 1000))
+            wavelength = float(data.get('wavelength', 532))
+            spot_spacing = float(data.get('spot_spacing', 1.0))
+            spot_count = int(data.get('spot_count', 3))
+            pixel_size_um = float(data.get('pixel_size_um', 12.5))
+            algorithm = str(data.get('algorithm', 'analytic'))
+            incident_beam_diameter_mm = float(
+                data.get('incident_beam_diameter_mm', 10.0)
+            )
+            iterations = int(data.get('iterations', 30))
+            phase_direction = str(data.get('phase_direction', 'standard'))
+            phase_array = SLMPatternGenerator.fresnel_three_spots(
+                width=width,
+                height=height,
+                focal_length=focal_length,
+                wavelength=wavelength,
+                spot_spacing=spot_spacing,
+                spot_count=spot_count,
+                pixel_size_um=pixel_size_um,
+                algorithm=algorithm,
+                incident_beam_diameter_mm=incident_beam_diameter_mm,
+                iterations=iterations,
+                phase_direction=phase_direction,
+                with_lens=False
+            )
+            name = (
+                f"three_spots_f{focal_length:g}mm_"
                 f"w{wavelength:g}nm_n{spot_count}_d{spot_spacing:g}mm_"
                 f"{algorithm}_{phase_direction}"
             )
@@ -1615,6 +1714,20 @@ def generate_pattern(pattern_type):
                 radius=float(data.get('radius', 100))
             )
             name = f"axicon_r{data.get('radius', 100)}"
+
+        elif pattern_type == 'cylindrical':
+            phase_array = SLMPatternGenerator.cylindrical_lens(
+                width=width,
+                height=height,
+                focal_length=float(data.get('focal_length', 1000)),
+                wavelength=float(data.get('wavelength', 532)),
+                pixel_size=float(data.get('pixel_size', 25e-3)),
+                angle=float(data.get('angle', 0))
+            )
+            name = (
+                f"cylindrical_f{data.get('focal_length', 1000)}mm_"
+                f"w{data.get('wavelength', 532)}nm_a{data.get('angle', 0)}"
+            )
 
         elif pattern_type == 'blaze':
             phase_array = SLMPatternGenerator.blaze_grating(
