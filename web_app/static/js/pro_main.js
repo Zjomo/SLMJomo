@@ -376,6 +376,7 @@ async function generatePattern(patternType) {
                 pixel_size_um: parseFloat(document.getElementById('three_spot_pixel_size').value),
                 algorithm: document.getElementById('three_spot_algorithm').value,
                 incident_beam_diameter_mm: parseFloat(document.getElementById('three_spot_beam_diameter').value),
+                spot_radius_mm: optionalNumber('three_spot_radius'),
                 iterations: parseInt(document.getElementById('three_spot_iterations').value),
                 phase_direction: document.getElementById('three_spot_phase_direction').value,
                 width: parseInt(document.getElementById('three_spot_width').value),
@@ -392,6 +393,7 @@ async function generatePattern(patternType) {
                 pixel_size_um: parseFloat(document.getElementById('tsn_pixel_size').value),
                 algorithm: document.getElementById('tsn_algorithm').value,
                 incident_beam_diameter_mm: parseFloat(document.getElementById('tsn_beam_diameter').value),
+                spot_radius_mm: optionalNumber('tsn_spot_radius'),
                 iterations: parseInt(document.getElementById('tsn_iterations').value),
                 phase_direction: document.getElementById('tsn_phase_direction').value,
                 width: parseInt(document.getElementById('tsn_width').value),
@@ -825,7 +827,7 @@ function updateSequenceList() {
     listEl.innerHTML = AppState.sequenceList.map((item, index) => `
         <div class="sequence-item" data-id="${item.id}">
             <span class="seq-index">#${index + 1}</span>
-            <span class="seq-params">${item.patternType || 'pattern'}: ${item.params}</span>
+            <span class="seq-params">${item.patternType || 'pattern'}: ${item.params}${item.paintAnimation ? ` · ${item.paintAnimation.frameCount} 帧` : ''}</span>
             <button class="btn-remove-seq" onclick="removeFromSequence(${item.id})">✖</button>
         </div>
     `).join('');
@@ -833,7 +835,29 @@ function updateSequenceList() {
 
 function removeFromSequence(id) {
     AppState.sequenceList = AppState.sequenceList.filter(item => item.id !== id);
+    if (AppState.isPlaying || AppState.sequenceIndex > 0) stopSequence();
+    else AppState.sequenceIndex = 0;
     updateSequenceList();
+}
+
+function getSequenceFrameCount(item) {
+    return item?.paintAnimation?.frameCount || 1;
+}
+
+function getSequenceTotalFrames() {
+    return AppState.sequenceList.reduce((total, item) => total + getSequenceFrameCount(item), 0);
+}
+
+function resolveSequenceFrame(index) {
+    let offset = 0;
+    for (const item of AppState.sequenceList) {
+        const frameCount = getSequenceFrameCount(item);
+        if (index < offset + frameCount) {
+            return { item, frameIndex: index - offset };
+        }
+        offset += frameCount;
+    }
+    return null;
 }
 
 function playSequence() {
@@ -841,15 +865,17 @@ function playSequence() {
         showNotification('序列为空，请先添加图案', 'warning');
         return;
     }
+    if (AppState.playInterval) return;
 
     AppState.isPlaying = true;
-    AppState.sequenceIndex = 0;
+    const totalFrames = getSequenceTotalFrames();
+    if (AppState.sequenceIndex >= totalFrames) AppState.sequenceIndex = 0;
 
-    const interval = parseInt(document.getElementById('play_interval').value) || 1000;
+    const interval = Math.max(100, parseInt(document.getElementById('play_interval').value, 10) || 1000);
     const loop = document.getElementById('loop_play').checked;
 
-    AppState.playInterval = setInterval(() => {
-        if (AppState.sequenceIndex >= AppState.sequenceList.length) {
+    const advanceSequence = () => {
+        if (AppState.sequenceIndex >= totalFrames) {
             if (loop) {
                 AppState.sequenceIndex = 0;
             } else {
@@ -858,14 +884,22 @@ function playSequence() {
             }
         }
 
-        const item = AppState.sequenceList[AppState.sequenceIndex];
-        displayPhaseImage(item.image);
+        const frame = resolveSequenceFrame(AppState.sequenceIndex);
+        if (!frame) {
+            stopSequence();
+            return;
+        }
+        const image = frame.item.paintAnimation
+            ? renderPaintBoardSequenceFrame(frame.item, frame.frameIndex)
+            : frame.item.image;
+        displayPhaseImage(image);
         AppState.sequenceIndex++;
 
-        // 更新播放状态
         document.getElementById('play_btn').disabled = true;
         document.getElementById('pause_btn').disabled = false;
-    }, interval);
+    };
+    advanceSequence();
+    AppState.playInterval = setInterval(advanceSequence, interval);
 
     showNotification('序列播放已开始', 'info');
 }
@@ -873,6 +907,7 @@ function playSequence() {
 function pauseSequence() {
     if (AppState.playInterval) {
         clearInterval(AppState.playInterval);
+        AppState.playInterval = null;
         AppState.isPlaying = false;
 
         document.getElementById('play_btn').disabled = false;
@@ -886,14 +921,13 @@ function stopSequence() {
     if (AppState.playInterval) {
         clearInterval(AppState.playInterval);
         AppState.playInterval = null;
-        AppState.isPlaying = false;
-        AppState.sequenceIndex = 0;
-
-        document.getElementById('play_btn').disabled = false;
-        document.getElementById('pause_btn').disabled = true;
-
-        showNotification('序列播放已停止', 'info');
     }
+    const wasPlaying = AppState.isPlaying;
+    AppState.isPlaying = false;
+    AppState.sequenceIndex = 0;
+    document.getElementById('play_btn').disabled = false;
+    document.getElementById('pause_btn').disabled = true;
+    if (wasPlaying) showNotification('序列播放已停止', 'info');
 }
 
 // ==================== 设备连接 ====================
@@ -992,6 +1026,7 @@ function resetModule(moduleId) {
             document.getElementById('three_spot_pixel_size').value = 12.5;
             document.getElementById('three_spot_algorithm').value = 'uniform_grating';
             document.getElementById('three_spot_beam_diameter').value = 10.0;
+            document.getElementById('three_spot_radius').value = '';
             document.getElementById('three_spot_iterations').value = 30;
             document.getElementById('three_spot_phase_direction').value = 'standard';
             document.getElementById('three_spot_width').value = 1272;
@@ -1008,6 +1043,7 @@ function resetModule(moduleId) {
             document.getElementById('tsn_pixel_size').value = 12.5;
             document.getElementById('tsn_algorithm').value = 'uniform_grating';
             document.getElementById('tsn_beam_diameter').value = 10.0;
+            document.getElementById('tsn_spot_radius').value = '';
             document.getElementById('tsn_iterations').value = 30;
             document.getElementById('tsn_phase_direction').value = 'standard';
             document.getElementById('tsn_width').value = 1272;
@@ -1284,6 +1320,7 @@ function toggleThreeSpotOptimization(prefix = 'three_spot') {
     const algorithm = document.getElementById(prefix + '_algorithm');
     const optimization = document.getElementById(prefix + '_optimization_params');
     const iterations = document.getElementById(prefix + '_iterations_container');
+    const spotRadius = document.getElementById(prefix + '_spot_radius_container');
     const dammann = document.getElementById(prefix + '_dammann_params');
     const uniform = document.getElementById(prefix + '_uniform_params');
     if (!algorithm || !optimization || !iterations || !dammann || !uniform) return;
@@ -1304,9 +1341,15 @@ function toggleThreeSpotOptimization(prefix = 'three_spot') {
     const usesBeamModel = algorithm.value === 'gaussian_wgs' || algorithm.value === 'dammann';
     optimization.style.display = usesBeamModel ? 'block' : 'none';
     iterations.style.display = algorithm.value === 'gaussian_wgs' ? 'block' : 'none';
+    if (spotRadius) spotRadius.style.display = algorithm.value === 'gaussian_wgs' ? 'block' : 'none';
     dammann.style.display = algorithm.value === 'dammann' ? 'block' : 'none';
     uniform.style.display = algorithm.value === 'uniform_grating' ? 'block' : 'none';
     updateThreeSpotDammannInfo(prefix);
+}
+
+function optionalNumber(id) {
+    const value = document.getElementById(id).value.trim();
+    return value === '' ? null : parseFloat(value);
 }
 
 function initializeThreeSpotDammannInfo(prefix = 'three_spot') {

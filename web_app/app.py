@@ -234,6 +234,7 @@ class SLMPatternGenerator:
         iterations=30,
         phase_direction='standard',
         with_lens=True,
+        spot_radius_mm=None,
         **kwargs
     ):
         """Generate a phase-only Fresnel hologram for three horizontal focal spots.
@@ -294,7 +295,8 @@ class SLMPatternGenerator:
                 spot_count=spot_count,
                 incident_beam_diameter_mm=incident_beam_diameter_mm,
                 iterations=iterations,
-                with_lens=with_lens
+                with_lens=with_lens,
+                spot_radius_mm=spot_radius_mm
             )
         elif algorithm == 'uniform_grating':
             phase = SLMPatternGenerator._uniform_spot_grating_phase(
@@ -519,7 +521,8 @@ class SLMPatternGenerator:
         spot_count,
         incident_beam_diameter_mm,
         iterations,
-        with_lens=True
+        with_lens=True,
+        spot_radius_mm=None
     ):
         """Optimize three equal-power Gaussian spots in the focal plane."""
         beam_radius = incident_beam_diameter_mm / 2
@@ -543,10 +546,20 @@ class SLMPatternGenerator:
 
         # 1/e^2 intensity waist at the focus, with a sampling floor so the
         # requested Gaussian is represented by the discrete Fourier grid.
-        target_waist = max(
-            wavelength_mm * focal_length / (np.pi * beam_radius),
-            0.8 * max(output_dx, output_dy)
-        )
+        minimum_waist = 0.8 * max(output_dx, output_dy)
+        if spot_radius_mm is None:
+            target_waist = max(
+                wavelength_mm * focal_length / (np.pi * beam_radius),
+                minimum_waist
+            )
+        else:
+            target_waist = float(spot_radius_mm)
+            if not np.isfinite(target_waist) or target_waist <= 0:
+                raise ValueError("指定光斑半径必须是大于 0 的有限数值")
+            if target_waist < minimum_waist:
+                raise ValueError(
+                    f"指定光斑半径小于当前采样下限 {minimum_waist:g} mm"
+                )
         if spot_spacing < 2 * target_waist:
             raise ValueError(
                 f"点间距过小，当前参数至少需要 {2 * target_waist:g} mm "
@@ -1623,6 +1636,11 @@ def generate_pattern(pattern_type):
                 data.get('incident_beam_diameter_mm', 10.0)
             )
             iterations = int(data.get('iterations', 30))
+            spot_radius_mm = data.get('spot_radius_mm')
+            spot_radius_mm = (
+                float(spot_radius_mm) if spot_radius_mm not in (None, '')
+                else None
+            )
             phase_direction = str(data.get('phase_direction', 'standard'))
             phase_array = SLMPatternGenerator.fresnel_three_spots(
                 width=width,
@@ -1635,6 +1653,7 @@ def generate_pattern(pattern_type):
                 algorithm=algorithm,
                 incident_beam_diameter_mm=incident_beam_diameter_mm,
                 iterations=iterations,
+                spot_radius_mm=spot_radius_mm,
                 phase_direction=phase_direction
             )
             name = (
@@ -1655,6 +1674,11 @@ def generate_pattern(pattern_type):
                 data.get('incident_beam_diameter_mm', 10.0)
             )
             iterations = int(data.get('iterations', 30))
+            spot_radius_mm = data.get('spot_radius_mm')
+            spot_radius_mm = (
+                float(spot_radius_mm) if spot_radius_mm not in (None, '')
+                else None
+            )
             phase_direction = str(data.get('phase_direction', 'standard'))
             phase_array = SLMPatternGenerator.fresnel_three_spots(
                 width=width,
@@ -1667,6 +1691,7 @@ def generate_pattern(pattern_type):
                 algorithm=algorithm,
                 incident_beam_diameter_mm=incident_beam_diameter_mm,
                 iterations=iterations,
+                spot_radius_mm=spot_radius_mm,
                 phase_direction=phase_direction,
                 with_lens=False
             )

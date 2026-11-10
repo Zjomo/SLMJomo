@@ -260,6 +260,39 @@ class FresnelThreeSpotTests(unittest.TestCase):
         cycles = round(self.SPACING_MM / output_step)
         self.assertEqual(cycles % 2, 0)
 
+    def test_gaussian_wgs_accepts_explicit_spot_radius(self):
+        patterns = [
+            SLMPatternGenerator.fresnel_three_spots(
+                width=self.WIDTH,
+                height=self.HEIGHT,
+                focal_length=self.FOCAL_LENGTH_MM,
+                wavelength=self.WAVELENGTH_NM,
+                spot_spacing=self.SPACING_MM,
+                pixel_size_um=self.PITCH_UM,
+                algorithm='gaussian_wgs',
+                incident_beam_diameter_mm=self.BEAM_DIAMETER_MM,
+                iterations=5,
+                with_lens=False,
+                spot_radius_mm=radius
+            )
+            for radius in (0.15, 0.25)
+        ]
+        self.assertFalse(np.array_equal(*patterns))
+
+    def test_gaussian_wgs_rejects_unresolvable_spot_radius(self):
+        with self.assertRaisesRegex(ValueError, '采样下限'):
+            SLMPatternGenerator.fresnel_three_spots(
+                width=self.WIDTH,
+                height=self.HEIGHT,
+                focal_length=self.FOCAL_LENGTH_MM,
+                wavelength=self.WAVELENGTH_NM,
+                spot_spacing=self.SPACING_MM,
+                pixel_size_um=self.PITCH_UM,
+                algorithm='gaussian_wgs',
+                with_lens=False,
+                spot_radius_mm=0.01
+            )
+
     def test_dammann_rejects_non_three_count(self):
         with self.assertRaisesRegex(ValueError, '仅支持 3'):
             SLMPatternGenerator.fresnel_three_spots(

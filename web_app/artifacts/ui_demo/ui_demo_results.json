@@ -1,0 +1,64 @@
+{
+  "base_url": "http://127.0.0.1:5000/",
+  "steps": [
+    {
+      "name": "wavelength preset 633",
+      "status": "passed"
+    },
+    {
+      "name": "set compact Fresnel parameters",
+      "status": "passed"
+    },
+    {
+      "name": "generate Fresnel phase",
+      "status": "passed"
+    },
+    {
+      "name": "add current result to sequence",
+      "status": "passed"
+    },
+    {
+      "name": "navigate to double ring",
+      "status": "passed"
+    },
+    {
+      "name": "expand double ring",
+      "status": "passed"
+    },
+    {
+      "name": "set fast double ring demo parameters",
+      "status": "failed",
+      "error": "Locator.fill: Timeout 30000ms exceeded.\nCall log:\n  - waiting for locator(\"#double_ring_iterations\")\n    - locator resolved to <input min=\"1\" step=\"1\" max=\"200\" value=\"100\" type=\"number\" class=\"param-input\" id=\"double_ring_iterations\" oninput=\"scheduleDoubleRingPreview()\"/>\n    - fill(\"5\")\n  - attempting fill action\n    2 × waiting for element to be visible, enabled and editable\n      - element is not visible\n    - retrying fill action\n    - waiting 20ms\n    2 × waiting for element to be visible, enabled and editable\n      - element is not visible\n    - retrying fill action\n      - waiting 100ms\n    60 × waiting for element to be visible, enabled and editable\n       - element is not visible\n     - retrying fill action\n       - waiting 500ms\n"
+    },
+    {
+      "name": "navigate to Fourier simulation",
+      "status": "passed"
+    },
+    {
+      "name": "use current phase for Fourier",
+      "status": "failed",
+      "error": "Locator.click: Timeout 30000ms exceeded.\nCall log:\n  - waiting for locator(\"button[onclick='useCurrentPhaseForFourier()']\")\n    - locator resolved to <button class=\"btn btn-secondary\" onclick=\"useCurrentPhaseForFourier()\">…</button>\n  - attempting click action\n    2 × waiting for element to be visible, enabled and stable\n      - element is not visible\n    - retrying click action\n    - waiting 20ms\n    2 × waiting for element to be visible, enabled and stable\n      - element is not visible\n    - retrying click action\n      - waiting 100ms\n    58 × waiting for element to be visible, enabled and stable\n       - element is not visible\n     - retrying click action\n       - waiting 500ms\n"
+    },
+    {
+      "name": "select Gaussian illumination",
+      "status": "failed",
+      "error": "Locator.select_option: Timeout 30000ms exceeded.\nCall log:\n  - waiting for locator(\"#fourier_illumination_type\")\n    - locator resolved to <select class=\"param-select\" id=\"fourier_illumination_type\" onchange=\"toggleBeamRadiusInput()\">…</select>\n  - attempting select option action\n    2 × waiting for element to be visible and enabled\n      - element is not visible\n    - retrying select option action\n    - waiting 20ms\n    2 × waiting for element to be visible and enabled\n      - element is not visible\n    - retrying select option action\n      - waiting 100ms\n    60 × waiting for element to be visible and enabled\n       - element is not visible\n     - retrying select option action\n       - waiting 500ms\n"
+    },
+    {
+      "name": "set compact Fourier output",
+      "status": "failed",
+      "error": "Locator.fill: Timeout 30000ms exceeded.\nCall log:\n  - waiting for locator(\"#fourier_width\")\n    - locator resolved to <input min=\"64\" max=\"2048\" value=\"512\" type=\"number\" id=\"fourier_width\" class=\"param-input\"/>\n    - fill(\"128\")\n  - attempting fill action\n    2 × waiting for element to be visible, enabled and editable\n      - element is not visible\n    - retrying fill action\n    - waiting 20ms\n    2 × waiting for element to be visible, enabled and editable\n      - element is not visible\n    - retrying fill action\n      - waiting 100ms\n    60 × waiting for element to be visible, enabled and editable\n       - element is not visible\n     - retrying fill action\n       - waiting 500ms\n"
+    },
+    {
+      "name": "connect simulated device",
+      "status": "passed"
+    },
+    {
+      "name": "send current image to simulated SLM",
+      "status": "passed"
+    }
+  ],
+  "console_errors": [],
+  "failed_requests": [],
+  "video_path": "F:\\0_My_jupyter\\2_Optics\\SLMJomo\\SLMJomo\\web_app\\artifacts\\ui_demo\\video\\page@1d387589ddf51066e4fc4932b0735ecb.webm"
+}

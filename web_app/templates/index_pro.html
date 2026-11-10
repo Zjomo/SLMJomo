@@ -19,6 +19,7 @@
                 <a href="#" class="menu-item" onclick="switchTab('patterns')">🎨 图案库</a>
                 <a href="#" class="menu-item" onclick="switchTab('calibration')">⚙️ 校正</a>
                 <a href="#" class="menu-item" onclick="switchTab('sequence')">▶️ 序列</a>
+                <a href="#paint-board" class="menu-item" onclick="scrollToSection('paint-board'); return false;">✎ 绘图板</a>
                 <a href="#" class="menu-item" onclick="switchTab('settings')">🔧 设置</a>
             </nav>
             <div class="status-bar">
@@ -96,6 +97,10 @@
                         <li onclick="scrollToSection('fourier-sim')">
                             <span class="icon">📡</span>
                             <span>傅里叶面模拟</span>
+                        </li>
+                        <li onclick="scrollToSection('paint-board')">
+                            <span class="icon">✎</span>
+                            <span>动态绘图板</span>
                         </li>
                     </ul>
                 </div>
@@ -382,6 +387,12 @@
                                         <input type="number" class="param-input" id="three_spot_beam_diameter" value="10.0" min="0.1" max="100" step="0.1">
                                     </label>
                                 </div>
+                                <div class="param-item" id="three_spot_radius_container" style="display: none;">
+                                    <label>
+                                        <span class="param-label">目标光斑 1/e² 半径 (mm)</span>
+                                        <input type="number" class="param-input" id="three_spot_radius" value="" min="0.001" step="0.01" placeholder="自动估算">
+                                    </label>
+                                </div>
                                 <div class="param-item" id="three_spot_iterations_container">
                                     <label>
                                         <span class="param-label">优化迭代次数</span>
@@ -530,6 +541,12 @@
                                     <label>
                                         <span class="param-label">入射光束 1/e² 直径 (mm)</span>
                                         <input type="number" class="param-input" id="tsn_beam_diameter" value="10.0" min="0.1" max="100" step="0.1">
+                                    </label>
+                                </div>
+                                <div class="param-item" id="tsn_spot_radius_container" style="display: none;">
+                                    <label>
+                                        <span class="param-label">目标光斑 1/e² 半径 (mm)</span>
+                                        <input type="number" class="param-input" id="tsn_spot_radius" value="" min="0.001" step="0.01" placeholder="自动估算">
                                     </label>
                                 </div>
                                 <div class="param-item" id="tsn_iterations_container">
@@ -1641,6 +1658,107 @@
                     </div>
                 </section>
 
+                <!-- Paint Board animation editor -->
+                <section class="module-card" id="paint-board">
+                    <div class="module-header">
+                        <h2>✎ 动态全息绘图板</h2>
+                    </div>
+                    <div class="module-content">
+                        <div class="paint-board-layout">
+                            <div class="paint-editor-panel">
+                                <div class="paint-toolbar" role="toolbar" aria-label="绘图工具">
+                                    <div class="paint-tool-group">
+                                        <button type="button" class="btn-tool paint-tool active" data-mode="brush" onclick="setPaintTool('brush')" title="画笔">✎</button>
+                                        <button type="button" class="btn-tool paint-tool" data-mode="eraser" onclick="setPaintTool('eraser')" title="橡皮擦">⌫</button>
+                                        <button type="button" class="btn-tool" onclick="undoPaintStroke()" title="撤销">↶</button>
+                                        <button type="button" class="btn-tool" onclick="clearPaintBoard()" title="清空画布">▣</button>
+                                    </div>
+                                    <label class="paint-brush-control">
+                                        <span>笔宽</span>
+                                        <input type="range" id="paint_brush_size" min="1" max="32" value="8">
+                                        <output id="paint_brush_size_value">8 px</output>
+                                    </label>
+                                </div>
+                                <div class="paint-canvas-frame">
+                                    <canvas id="paint_source_canvas" width="512" height="512" aria-label="绘制目标光场轨迹"></canvas>
+                                </div>
+                                <div class="paint-canvas-meta">
+                                    <span>512 × 512 px</span>
+                                    <span id="paint_stroke_count">0 笔</span>
+                                    <span id="paint_phase_status">尚未生成全息图</span>
+                                </div>
+                            </div>
+
+                            <div class="paint-control-panel">
+                                <div class="paint-settings-grid">
+                                    <label class="param-item">
+                                        <span class="param-label">片段时长 (秒)</span>
+                                        <input type="number" class="param-input" id="paint_clip_duration" value="1" min="0.1" max="10" step="0.1">
+                                    </label>
+                                    <label class="param-item">
+                                        <span class="param-label">旋转角度 (°)</span>
+                                        <input type="number" class="param-input" id="paint_rotate_angle" value="90" min="-360" max="360" step="15">
+                                    </label>
+                                    <label class="param-item">
+                                        <span class="param-label">缩放倍率</span>
+                                        <input type="number" class="param-input" id="paint_scale_factor" value="1.5" min="0.25" max="4" step="0.05">
+                                    </label>
+                                    <label class="param-item">
+                                        <span class="param-label">平移 X (px)</span>
+                                        <input type="number" class="param-input" id="paint_move_x" value="100" min="-256" max="256" step="10">
+                                    </label>
+                                    <label class="param-item">
+                                        <span class="param-label">平移 Y (px)</span>
+                                        <input type="number" class="param-input" id="paint_move_y" value="0" min="-256" max="256" step="10">
+                                    </label>
+                                    <label class="param-item">
+                                        <span class="param-label">播放帧率 (FPS)</span>
+                                        <input type="number" class="param-input" id="paint_fps" value="10" min="1" max="30" step="1">
+                                    </label>
+                                </div>
+                                <div class="paint-clip-actions">
+                                    <button type="button" class="btn btn-secondary" onclick="addPaintClip('rotate')">＋ 旋转片段</button>
+                                    <button type="button" class="btn btn-secondary" onclick="addPaintClip('scale')">＋ 缩放片段</button>
+                                    <button type="button" class="btn btn-secondary" onclick="addPaintClip('move')">＋ 平移片段</button>
+                                </div>
+                                <div class="paint-clip-header">
+                                    <h3>动画片段</h3>
+                                    <button type="button" class="btn-text" onclick="clearPaintClips()">清空片段</button>
+                                </div>
+                                <div id="paint_clip_list" class="paint-clip-list">
+                                    <div class="paint-empty">添加旋转或缩放片段以创建动画</div>
+                                </div>
+                                <div class="paint-transport">
+                                    <button type="button" class="btn-control" onclick="playPaintPreview()" id="paint_play_btn" title="播放预览">▶</button>
+                                    <button type="button" class="btn-control" onclick="pausePaintPreview()" id="paint_pause_btn" title="暂停预览" disabled>Ⅱ</button>
+                                    <button type="button" class="btn-control" onclick="stopPaintPreview()" title="停止预览">■</button>
+                                    <span id="paint_frame_label">帧 0 / 0</span>
+                                </div>
+                                <input type="range" class="paint-timeline" id="paint_timeline" min="0" max="0" value="0" aria-label="动画帧">
+                                <label class="paint-loop-option"><input type="checkbox" id="paint_loop" checked> 循环播放</label>
+                                <div class="paint-previews">
+                                    <div class="paint-preview-box">
+                                        <h4>目标光场</h4>
+                                        <canvas id="paint_target_preview" width="512" height="512"></canvas>
+                                    </div>
+                                    <div class="paint-preview-box">
+                                        <h4>SLM 相位</h4>
+                                        <canvas id="paint_phase_preview" width="512" height="512"></canvas>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="paint-action-bar">
+                            <button type="button" class="btn btn-primary" onclick="generatePaintHologram()" id="paint_generate_btn">生成全息图</button>
+                            <button type="button" class="btn btn-secondary" onclick="addPaintAnimationToSequence()" id="paint_queue_btn" disabled>加入序列</button>
+                            <button type="button" class="btn btn-secondary" onclick="sendPaintAnimation()" id="paint_send_btn" disabled>发送动画</button>
+                            <button type="button" class="btn btn-secondary" onclick="savePaintJob()">保存动画任务</button>
+                            <button type="button" class="btn btn-secondary" onclick="document.getElementById('paint_job_file').click()">载入任务</button>
+                            <input type="file" id="paint_job_file" accept="application/json,.json" hidden>
+                        </div>
+                    </div>
+                </section>
+
                 <!-- 序列播放模块 -->
                 <section class="module-card" id="sequence-panel">
                     <div class="module-header">
@@ -1756,5 +1874,6 @@
 
     <!-- JavaScript -->
     <script src="{{ url_for('static', filename='js/pro_main.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/paint_board.js') }}"></script>
 </body>
 </html>

@@ -1,0 +1,141 @@
+{
+  "base_url": "http://127.0.0.1:5000/",
+  "steps": [
+    {
+      "name": "wavelength preset 633",
+      "status": "passed"
+    },
+    {
+      "name": "set fresnel parameters",
+      "status": "passed"
+    },
+    {
+      "name": "generate fresnel phase",
+      "status": "passed"
+    },
+    {
+      "name": "wait fresnel preview",
+      "status": "passed"
+    },
+    {
+      "name": "add fresnel to sequence",
+      "status": "passed"
+    },
+    {
+      "name": "navigate to vortex",
+      "status": "passed"
+    },
+    {
+      "name": "expand vortex module",
+      "status": "passed"
+    },
+    {
+      "name": "set vortex parameters",
+      "status": "passed"
+    },
+    {
+      "name": "generate vortex",
+      "status": "passed"
+    },
+    {
+      "name": "wait vortex preview",
+      "status": "passed"
+    },
+    {
+      "name": "add vortex to sequence",
+      "status": "passed"
+    },
+    {
+      "name": "navigate to sequence",
+      "status": "passed"
+    },
+    {
+      "name": "check sequence items",
+      "status": "passed"
+    },
+    {
+      "name": "set interval 800ms",
+      "status": "passed"
+    },
+    {
+      "name": "play sequence",
+      "status": "passed"
+    },
+    {
+      "name": "wait playing state",
+      "status": "passed"
+    },
+    {
+      "name": "pause sequence",
+      "status": "passed"
+    },
+    {
+      "name": "stop sequence",
+      "status": "passed"
+    },
+    {
+      "name": "navigate to bmp converter",
+      "status": "passed"
+    },
+    {
+      "name": "expand bmp module",
+      "status": "passed"
+    },
+    {
+      "name": "upload demo image",
+      "status": "passed"
+    },
+    {
+      "name": "set bmp output 512x512",
+      "status": "passed"
+    },
+    {
+      "name": "convert to bmp",
+      "status": "passed"
+    },
+    {
+      "name": "wait bmp preview",
+      "status": "passed"
+    },
+    {
+      "name": "navigate to fourier",
+      "status": "passed"
+    },
+    {
+      "name": "expand fourier module",
+      "status": "passed"
+    },
+    {
+      "name": "use current phase",
+      "status": "passed"
+    },
+    {
+      "name": "select gaussian illumination",
+      "status": "passed"
+    },
+    {
+      "name": "set fourier output 256x256",
+      "status": "passed"
+    },
+    {
+      "name": "run fourier simulation",
+      "status": "passed"
+    },
+    {
+      "name": "wait fourier color result",
+      "status": "passed"
+    },
+    {
+      "name": "connect device",
+      "status": "passed"
+    },
+    {
+      "name": "show on simulated SLM",
+      "status": "passed"
+    }
+  ],
+  "console_errors": [],
+  "failed_requests": [],
+  "known_noise_auto_double_ring_preview": [],
+  "video_path": "F:\\0_My_jupyter\\2_Optics\\SLMJomo\\SLMJomo\\web_app\\artifacts\\ui_demo_v2\\video\\page@c9b833976f64de8428f5c0b05e7cae52.webm"
+}
