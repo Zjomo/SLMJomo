@@ -7,6 +7,8 @@
 const AppState = {
     currentImageData: null,
     currentPatternType: null,
+    generationInProgress: false,
+    history: [],
     uploadedImage: null,
     sequenceList: [],
     sequenceIndex: 0,
@@ -35,6 +37,7 @@ document.addEventListener('DOMContentLoaded', function() {
 function initializeApp() {
     console.log('LCOS-SLM 专业控制面板已加载');
     loadHistory();
+    loadPresets();
     initializeCGHUpload();
     initializeCGHShapeHint();
     initializeConverterUpload();
@@ -306,7 +309,7 @@ function setWavelength(value) {
 
 // ==================== 生成菲涅尔透镜 ====================
 async function generateFresnel() {
-    showLoading(true);
+    if (!beginGeneration()) return;
     AppState.currentPatternType = 'fresnel';
 
     const params = {
@@ -345,14 +348,14 @@ async function generateFresnel() {
         console.error('生成错误:', error);
         showNotification('生成失败: ' + error.message, 'error');
     } finally {
-        showLoading(false);
+        endGeneration();
     }
 }
 
 // ==================== 通用图案生成函数 ====================
 async function generatePattern(patternType) {
+    if (!beginGeneration()) return;
     AppState.currentPatternType = patternType;
-    showLoading(true);
 
     // 构建参数
     let params = {};
@@ -382,6 +385,19 @@ async function generatePattern(patternType) {
                 width: parseInt(document.getElementById('three_spot_width').value),
                 height: parseInt(document.getElementById('three_spot_height').value)
             };
+            if (isSpotArrayCustomized()) {
+                const issue = validateSpotArray();
+                if (issue) {
+                    endGeneration();
+                    setSpotArrayStatus(issue, true);
+                    showNotification(issue, 'warning');
+                    return;
+                }
+                params.target_spots = getSpotArrayPayload();
+                params.spot_count = params.target_spots.length;
+                params.algorithm = 'gaussian_wgs';
+                params.legacy_algorithm = SpotArrayState.legacyAlgorithm || 'uniform_grating';
+            }
             break;
 
         case 'three_spots':
@@ -486,7 +502,7 @@ async function generatePattern(patternType) {
 
         default:
             showNotification('不支持的图案类型: ' + patternType, 'error');
-            showLoading(false);
+            endGeneration();
             return;
     }
 
@@ -523,7 +539,7 @@ async function generatePattern(patternType) {
         console.error('生成错误:', error);
         showNotification('生成失败: ' + error.message, 'error');
     } finally {
-        showLoading(false);
+        endGeneration();
     }
 }
 
@@ -776,7 +792,7 @@ function addToSequence() {
         image: AppState.currentImageData.image,
         patternType: AppState.currentPatternType,
         filename: AppState.currentImageData.filename,
-        params: getCurrentParamsDescription()
+        params: AppState.currentImageData.paramsDescription || getCurrentParamsDescription()
     };
 
     AppState.sequenceList.push(sequenceItem);
@@ -792,6 +808,9 @@ function getCurrentParamsDescription() {
         case 'fresnel':
             return `f=${document.getElementById('focus_mm').value}mm, λ=${document.getElementById('wavelength_nm').value}nm`;
         case 'fresnel_three_spots':
+            if (isSpotArrayCustomized()) {
+                return `${getSpotArrayPayload().length} 点 · 二维独立阵列`;
+            }
             return `${document.getElementById('three_spot_count').value}点, f=${document.getElementById('three_spot_focus').value}mm, d=${document.getElementById('three_spot_spacing').value}mm`;
         case 'three_spots':
             return `${document.getElementById('tsn_count').value}点, f=${document.getElementById('tsn_focus').value}mm, d=${document.getElementById('tsn_spacing').value}mm, 无透镜`;
@@ -818,19 +837,38 @@ function getCurrentParamsDescription() {
 
 function updateSequenceList() {
     const listEl = document.getElementById('sequence_list');
+    listEl.replaceChildren();
 
     if (AppState.sequenceList.length === 0) {
-        listEl.innerHTML = '<div class="sequence-empty"><p>暂无序列，请添加图案</p></div>';
+        const empty = document.createElement('div');
+        empty.className = 'sequence-empty';
+        const message = document.createElement('p');
+        message.textContent = '暂无序列，请添加图案';
+        empty.append(message);
+        listEl.append(empty);
         return;
     }
 
-    listEl.innerHTML = AppState.sequenceList.map((item, index) => `
-        <div class="sequence-item" data-id="${item.id}">
-            <span class="seq-index">#${index + 1}</span>
-            <span class="seq-params">${item.patternType || 'pattern'}: ${item.params}${item.paintAnimation ? ` · ${item.paintAnimation.frameCount} 帧` : ''}</span>
-            <button class="btn-remove-seq" onclick="removeFromSequence(${item.id})">✖</button>
-        </div>
-    `).join('');
+    AppState.sequenceList.forEach((item, index) => {
+        const row = document.createElement('div');
+        row.className = 'sequence-item';
+        row.dataset.id = String(item.id);
+        const order = document.createElement('span');
+        order.className = 'seq-index';
+        order.textContent = `#${index + 1}`;
+        const details = document.createElement('span');
+        details.className = 'seq-params';
+        details.textContent = `${item.patternType || 'pattern'}: ${item.params || ''}${item.paintAnimation ? ` · ${item.paintAnimation.frameCount} 帧` : ''}`;
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'btn-remove-seq';
+        remove.textContent = '✖';
+        remove.title = '从序列移除';
+        remove.setAttribute('aria-label', '从序列移除');
+        remove.addEventListener('click', () => removeFromSequence(item.id));
+        row.append(order, details, remove);
+        listEl.append(row);
+    });
 }
 
 function removeFromSequence(id) {
@@ -932,18 +970,17 @@ function stopSequence() {
 
 // ==================== 设备连接 ====================
 function connectDevice() {
-    // 模拟设备连接
     AppState.deviceConnected = true;
 
     const statusEl = document.getElementById('device_status');
     statusEl.innerHTML = `
         <span class="status-icon">✅</span>
-        <span class="status-text">已连接</span>
+        <span class="status-text">模拟已连接</span>
     `;
 
-    document.getElementById('device_name').textContent = 'LCOS-SLM X15223';
+    document.getElementById('device_name').textContent = '模拟设备 · LCOS-SLM X15223';
 
-    showNotification('设备连接成功', 'success');
+    showNotification('模拟设备已连接；尚未连接真实 SLM', 'info');
 }
 
 // ==================== 显示到SLM ====================
@@ -958,15 +995,14 @@ function showOnSLM() {
         return;
     }
 
-    // 模拟显示到SLM
-    showNotification('相位图已发送到SLM显示器', 'success');
+    showNotification('模拟显示完成；相位图未发送到真实 SLM', 'info');
 }
 
 // ==================== 下载图像 ====================
 function downloadImage() {
     if (AppState.currentImageData && AppState.currentImageData.filename) {
         const link = document.createElement('a');
-        link.href = `/api/download/${AppState.currentImageData.filename}`;
+        link.href = `/api/download/${encodeURIComponent(AppState.currentImageData.filename)}`;
         link.download = AppState.currentImageData.filename;
         link.click();
         showNotification('8-bit BMP 图像下载已开始', 'success');
@@ -978,6 +1014,21 @@ function downloadImage() {
 // ==================== 工具函数 ====================
 function showLoading(show) {
     document.getElementById('loading').style.display = show ? 'flex' : 'none';
+}
+
+function beginGeneration() {
+    if (AppState.generationInProgress) {
+        showNotification('正在生成，请稍候', 'warning');
+        return false;
+    }
+    AppState.generationInProgress = true;
+    showLoading(true);
+    return true;
+}
+
+function endGeneration() {
+    AppState.generationInProgress = false;
+    showLoading(false);
 }
 
 function toggleModule(moduleId) {
@@ -1031,6 +1082,8 @@ function resetModule(moduleId) {
             document.getElementById('three_spot_phase_direction').value = 'standard';
             document.getElementById('three_spot_width').value = 1272;
             document.getElementById('three_spot_height').value = 1024;
+            if (typeof resetSpotArray === 'function') resetSpotArray();
+            document.getElementById('three_spot_algorithm').value = 'uniform_grating';
             toggleThreeSpotOptimization();
             showNotification('多点聚焦参数已重置', 'info');
             break;
@@ -1138,13 +1191,18 @@ function initializeCGHUpload() {
 
             const reader = new FileReader();
             reader.onload = function(e) {
-                AppState.cghData.targetImage = e.target.result;
-                displayCGHTargetImage(e.target.result);
-                generateLightShapePreview();
+                setCGHTargetImage(e.target.result, file.name);
             };
             reader.readAsDataURL(file);
         }
     });
+}
+
+function setCGHTargetImage(imageSrc, label) {
+    AppState.cghData.targetImage = imageSrc;
+    document.getElementById('cgh_target_path').value = label;
+    displayCGHTargetImage(imageSrc);
+    generateLightShapePreview();
 }
 
 function initializeCGHShapeHint() {
@@ -1232,9 +1290,9 @@ async function calculateCGH() {
         showNotification('请先选择目标图像', 'warning');
         return;
     }
+    if (!beginGeneration()) return;
 
     AppState.currentPatternType = 'cgh';
-    showLoading(true);
 
     const gaussianSpotsValue = parseInt(document.getElementById('cgh_gaussian_spots').value);
     const params = {
@@ -1301,7 +1359,7 @@ async function calculateCGH() {
         console.error('CGH计算错误:', error);
         showNotification('CGH计算失败: ' + error.message, 'error');
     } finally {
-        showLoading(false);
+        endGeneration();
     }
 }
 
@@ -1324,6 +1382,11 @@ function toggleThreeSpotOptimization(prefix = 'three_spot') {
     const dammann = document.getElementById(prefix + '_dammann_params');
     const uniform = document.getElementById(prefix + '_uniform_params');
     if (!algorithm || !optimization || !iterations || !dammann || !uniform) return;
+
+    if (prefix === 'three_spot' && typeof isSpotArrayCustomized === 'function' &&
+            isSpotArrayCustomized()) {
+        algorithm.value = 'gaussian_wgs';
+    }
 
     const spotCount = parseInt(document.getElementById(prefix + '_count').value);
     const dammannOption = algorithm.querySelector('option[value="dammann"]');
@@ -1434,15 +1497,49 @@ function sendCGHToSLM() {
         return;
     }
 
-    showNotification('CGH已发送到SLM显示器', 'success');
+    showNotification('CGH 模拟发送完成；图像未发送到真实 SLM', 'info');
 }
 
 function loadPatternFromMain() {
-    showNotification('从主程序加载图案功能开发中...', 'info');
+    const currentImage = AppState.currentImageData;
+    if (!currentImage?.image) {
+        showNotification('请先在主预览中生成或加载图案', 'warning');
+        return;
+    }
+
+    const label = currentImage.filename
+        ? `主程序: ${currentImage.filename}`
+        : '主程序当前图案';
+    setCGHTargetImage(currentImage.image, label);
+    showNotification('主预览图案已设为 CGH 目标图像', 'success');
 }
 
-function loadCGHFromMain() {
-    showNotification('从主程序加载CGH功能开发中...', 'info');
+async function loadCGHFromMain() {
+    const imageData = AppState.cghData.cghImage;
+    if (!imageData) {
+        showNotification('请先在 CGH 模块中生成相位图', 'warning');
+        return;
+    }
+
+    try {
+        const image = await loadPaintImage(imageData);
+        displayPhaseImage(imageData);
+        AppState.currentPatternType = 'cgh';
+        AppState.currentImageData = {
+            image: imageData,
+            filename: AppState.cghData.filename || 'cgh-phase.bmp',
+            paramsDescription: 'CGH'
+        };
+        document.getElementById('download_btn').disabled = false;
+        document.getElementById('info_focus').textContent = 'CGH';
+        document.getElementById('info_wavelength').textContent = 'N/A';
+        document.getElementById('info_resolution').textContent =
+            image.naturalWidth + ' × ' + image.naturalHeight;
+        document.getElementById('info_time').textContent = new Date().toLocaleTimeString('zh-CN');
+        showNotification('CGH 相位图已恢复到主预览', 'success');
+    } catch (error) {
+        showNotification('CGH 相位图加载失败: ' + error.message, 'error');
+    }
 }
 
 function returnToMain() {
@@ -1658,7 +1755,144 @@ function resetConverter() {
 }
 
 function saveModuleAsPreset(moduleId) {
-    showNotification('预设保存功能开发中...', 'info');
+    if (moduleId !== 'fresnel') {
+        showNotification('目前仅支持保存菲涅尔透镜参数', 'warning');
+        return;
+    }
+
+    const preset = {
+        focus_mm: Number(document.getElementById('focus_mm').value),
+        wavelength_nm: Number(document.getElementById('wavelength_nm').value),
+        x_pixels: Number(document.getElementById('x_pixels').value),
+        y_pixels: Number(document.getElementById('y_pixels').value),
+        pitch_mode: Number(document.getElementById('pitch_mode').value),
+        rotation_degree: Number(document.getElementById('rotation_degree').value),
+        offset_x: Number(document.getElementById('offset_x').value),
+        offset_y: Number(document.getElementById('offset_y').value),
+        scale_factor: Number(document.getElementById('scale_factor').value)
+    };
+    if (Object.values(preset).some(value => !Number.isFinite(value))) {
+        showNotification('请检查菲涅尔参数后再保存', 'warning');
+        return;
+    }
+
+    const defaultName = `菲涅尔 f=${preset.focus_mm}mm λ=${preset.wavelength_nm}nm`;
+    const name = window.prompt('预设名称', defaultName)?.trim();
+    if (!name) return;
+    if (name.length > 100) {
+        showNotification('预设名称不能超过 100 个字符', 'warning');
+        return;
+    }
+
+    fetch('/api/presets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            ...preset,
+            name,
+            description: '菲涅尔透镜参数'
+        })
+    })
+        .then(async response => {
+            const data = await response.json();
+            if (!response.ok || !data.success) throw new Error(data.error || '保存失败');
+            showNotification('参数预设已保存', 'success');
+            loadPresets();
+        })
+        .catch(error => showNotification(`预设保存失败: ${error.message}`, 'error'));
+}
+
+async function loadPresets() {
+    const list = document.getElementById('preset_list');
+    if (!list) return;
+    try {
+        const response = await fetch('/api/presets');
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || '加载失败');
+        renderPresetList(data.presets);
+    } catch (error) {
+        list.replaceChildren();
+        const empty = document.createElement('li');
+        empty.className = 'preset-empty';
+        empty.textContent = '预设加载失败';
+        list.append(empty);
+        console.error('加载预设失败:', error);
+    }
+}
+
+function renderPresetList(presets) {
+    const list = document.getElementById('preset_list');
+    list.replaceChildren();
+    if (!presets.length) {
+        const empty = document.createElement('li');
+        empty.className = 'preset-empty';
+        empty.textContent = '暂无预设';
+        list.append(empty);
+        return;
+    }
+
+    presets.forEach(preset => {
+        const item = document.createElement('li');
+        item.className = 'preset-entry';
+
+        const applyButton = document.createElement('button');
+        applyButton.type = 'button';
+        applyButton.className = 'preset-apply';
+        applyButton.addEventListener('click', () => applyPreset(preset));
+        const name = document.createElement('span');
+        name.className = 'pattern-name';
+        name.textContent = preset.name;
+        const details = document.createElement('span');
+        details.className = 'preset-meta';
+        details.textContent = `f=${preset.focus_mm} mm · λ=${preset.wavelength_nm} nm`;
+        applyButton.append(name, details);
+
+        const deleteButton = document.createElement('button');
+        deleteButton.type = 'button';
+        deleteButton.className = 'preset-delete';
+        deleteButton.textContent = '×';
+        deleteButton.title = `删除预设 ${preset.name}`;
+        deleteButton.setAttribute('aria-label', deleteButton.title);
+        deleteButton.addEventListener('click', () => deletePreset(preset));
+        item.append(applyButton, deleteButton);
+        list.append(item);
+    });
+}
+
+function applyPreset(preset) {
+    const values = {
+        focus_mm: preset.focus_mm,
+        wavelength_nm: preset.wavelength_nm,
+        x_pixels: preset.x_pixels,
+        y_pixels: preset.y_pixels,
+        pitch_mode: preset.pitch_mode,
+        rotation_degree: preset.rotation_degree,
+        offset_x: preset.offset_x,
+        offset_y: preset.offset_y,
+        scale_factor: preset.scale_factor
+    };
+    Object.entries(values).forEach(([id, value]) => {
+        const input = document.getElementById(id);
+        if (input && value !== null && value !== undefined) input.value = value;
+    });
+    document.getElementById('focus_slider').value = preset.focus_mm;
+    document.getElementById('rotation_slider').value = preset.rotation_degree;
+    setWavelength(preset.wavelength_nm);
+    scrollToSection('fresnel');
+    showNotification(`已加载预设「${preset.name}」，可继续生成相位图`, 'success');
+}
+
+async function deletePreset(preset) {
+    if (!window.confirm(`删除预设「${preset.name}」？`)) return;
+    try {
+        const response = await fetch(`/api/presets/${Number(preset.id)}`, { method: 'DELETE' });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || '删除失败');
+        showNotification('参数预设已删除', 'success');
+        await loadPresets();
+    } catch (error) {
+        showNotification(`预设删除失败: ${error.message}`, 'error');
+    }
 }
 
 function zoomIn() {
@@ -1683,14 +1917,35 @@ function applyZoom() {
     }
 }
 
-function switchTab(tabName) {
-    // 切换菜单激活状态
+function switchTab(event) {
+    const link = event?.currentTarget;
+    if (!link) return false;
+
+    if (link.getAttribute('aria-disabled') === 'true') {
+        event.preventDefault();
+        showNotification(
+            link.getAttribute('data-unavailable-message') || '该视图尚未实现',
+            'info'
+        );
+        return false;
+    }
+
+    const href = link.getAttribute('href') || '';
+    const sectionId = href.startsWith('#') ? href.slice(1) : '';
+    const section = sectionId ? document.getElementById(sectionId) : null;
+    if (!section) {
+        event.preventDefault();
+        showNotification('菜单目标不可用', 'warning');
+        return false;
+    }
+
+    event.preventDefault();
     document.querySelectorAll('.menu-item').forEach(item => {
         item.classList.remove('active');
     });
-    event.target.classList.add('active');
-
-    showNotification(`切换到 ${tabName} 页面`, 'info');
+    link.classList.add('active');
+    scrollToSection(sectionId);
+    return true;
 }
 
 function scrollToSection(sectionId) {
@@ -1711,11 +1966,531 @@ function scrollToSection(sectionId) {
 }
 
 function startWorkflow(action) {
-    showNotification(`${action} 功能开发中...`, 'info');
+    if (action === 'new') {
+        if (window.confirm('新建项目会清空当前页面设置和播放序列。尚未保存的内容将丢失。')) {
+            window.location.reload();
+        }
+        return;
+    }
+    if (action === 'save') {
+        saveWorkflowProject();
+        return;
+    }
+    if (action === 'open') {
+        openWorkflowProject();
+        return;
+    }
+    showNotification('未知的项目操作', 'warning');
+}
+
+function captureProjectControls() {
+    const controls = {};
+    document.querySelectorAll('.workspace input[id], .workspace select[id], .workspace textarea[id]')
+        .forEach(control => {
+            if (['button', 'submit', 'reset', 'file', 'hidden'].includes(control.type)) return;
+            controls[control.id] = control.type === 'checkbox' ? control.checked : control.value;
+        });
+    return controls;
+}
+
+function serializeProjectImage(source, budget, label) {
+    const data = validateProjectImage(source);
+    if (!data) return null;
+    const dimensions = readProjectImageDimensions(data);
+    const pixels = dimensions.width * dimensions.height;
+    if (!Number.isSafeInteger(pixels) ||
+        dimensions.width > MAX_PROJECT_IMAGE_DIMENSION ||
+        dimensions.height > MAX_PROJECT_IMAGE_DIMENSION || pixels > MAX_PROJECT_IMAGE_PIXELS) {
+        throw new Error(`${label}尺寸超过项目导入限制`);
+    }
+    budget.pixels += pixels;
+    if (budget.pixels > MAX_PROJECT_TOTAL_IMAGE_PIXELS) {
+        throw new Error('项目图像总像素超过导入限制');
+    }
+    return data;
+}
+
+function serializeProjectSequenceItem(item, imageBudget) {
+    const saved = {
+        id: item.id,
+        image: serializeProjectImage(item.image, imageBudget, '序列相位图'),
+        patternType: item.patternType || 'pattern',
+        filename: item.filename || '',
+        params: item.params || ''
+    };
+    if (item.paintAnimation) {
+        saved.paintAnimation = {
+            source: serializeProjectImage(
+                item.paintAnimation.source.toDataURL('image/png'), imageBudget, '动画源图'
+            ),
+            phaseImage: serializeProjectImage(
+                item.paintAnimation.phaseImage.src, imageBudget, '动画相位图'
+            ),
+            clips: item.paintAnimation.clips,
+            fps: item.paintAnimation.fps
+        };
+    }
+    return saved;
+}
+
+function saveWorkflowProject() {
+    try {
+        const imageBudget = { pixels: 0 };
+        const spotArray = typeof getSpotArrayProjectState === 'function'
+            ? getSpotArrayProjectState()
+            : null;
+        const currentPatternType = AppState.currentPatternType || 'pattern';
+        const currentOutput = AppState.currentImageData?.image
+            ? {
+                image: serializeProjectImage(
+                    AppState.currentImageData.image, imageBudget, '主预览图'
+                ),
+                patternType: currentPatternType,
+                filename: AppState.currentImageData.filename || '',
+                params: AppState.currentImageData.paramsDescription || '',
+                infoFocus: currentPatternType === 'cgh'
+                    ? 'CGH'
+                    : document.getElementById('info_focus')?.textContent || '',
+                infoWavelength: currentPatternType === 'cgh'
+                    ? 'N/A'
+                    : document.getElementById('info_wavelength')?.textContent || ''
+            }
+            : null;
+        const cghData = AppState.cghData || {};
+        const cghTargetLabel = document.getElementById('cgh_target_path')?.value || '';
+        const cghPhaseReusesCurrentOutput = Boolean(
+            currentOutput && cghData.cghImage && cghData.cghImage === AppState.currentImageData.image
+        );
+        const cgh = {
+            target_image: serializeProjectImage(cghData.targetImage, imageBudget, 'CGH 目标图'),
+            phase_image: cghPhaseReusesCurrentOutput
+                ? null
+                : serializeProjectImage(cghData.cghImage, imageBudget, 'CGH 相位图'),
+            phase_image_ref: cghPhaseReusesCurrentOutput ? 'current_output' : null,
+            regenerated_image: serializeProjectImage(
+                cghData.regeneratedImage, imageBudget, 'CGH 重建图'
+            ),
+            light_shape_image: serializeProjectImage(
+                cghData.lightShapeImage, imageBudget, 'CGH 光斑图'
+            ),
+            filename: typeof cghData.filename === 'string' ? cghData.filename : '',
+            target_label: cghTargetLabel.slice(0, 200)
+        };
+        const project = {
+            format: 'slmjomo-project',
+            version: 2,
+            saved_at: new Date().toISOString(),
+            controls: captureProjectControls(),
+            uploaded_image: serializeProjectImage(
+                AppState.uploadedImage, imageBudget, '上传图像'
+            ),
+            spot_array: spotArray,
+            sequence: AppState.sequenceList.map(item =>
+                serializeProjectSequenceItem(item, imageBudget)
+            ),
+            current_output: currentOutput,
+            cgh
+        };
+        const contents = JSON.stringify(project, null, 2);
+        if (contents.length > 32 * 1024 * 1024) {
+            throw new Error('项目文件超过 32 MB，请减少序列帧或单独保存绘图任务');
+        }
+        const blob = new Blob([contents], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `slmjomo_project_${new Date().toISOString().replace(/[:.]/g, '-')}.slmproject.json`;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        showNotification('项目文件已保存', 'success');
+    } catch (error) {
+        showNotification(`项目保存失败: ${error.message}`, 'error');
+    }
+}
+
+function openWorkflowProject() {
+    const picker = document.createElement('input');
+    picker.type = 'file';
+    picker.accept = '.json,.slmproject.json,application/json';
+    picker.hidden = true;
+    picker.addEventListener('change', async () => {
+        const file = picker.files?.[0];
+        picker.remove();
+        if (!file) return;
+        try {
+            if (file.size > 32 * 1024 * 1024) throw new Error('项目文件不能超过 32 MB');
+            const project = JSON.parse(await file.text());
+            await restoreWorkflowProject(project);
+            showNotification('项目已打开', 'success');
+        } catch (error) {
+            showNotification(`项目打开失败: ${error.message}`, 'error');
+        }
+    }, { once: true });
+    picker.addEventListener('cancel', () => picker.remove(), { once: true });
+    document.body.append(picker);
+    picker.click();
+}
+
+const MAX_PROJECT_IMAGE_DIMENSION = 8192;
+const MAX_PROJECT_IMAGE_PIXELS = 16 * 1024 * 1024;
+const MAX_PROJECT_TOTAL_IMAGE_PIXELS = 64 * 1024 * 1024;
+
+function validateProjectImage(image) {
+    if (image === null || image === undefined || image === '') return null;
+    if (typeof image !== 'string' || image.length > 24 * 1024 * 1024 ||
+        !/^data:image\/(png|jpeg|jpg|bmp|webp|gif|tiff);base64,[A-Za-z0-9+/=\r\n]+$/i.test(image)) {
+        throw new Error('项目中包含无效或过大的图像');
+    }
+    return image;
+}
+
+async function loadValidatedProjectImage(source, budget, label) {
+    const data = validateProjectImage(source);
+    if (!data) return null;
+    const dimensions = readProjectImageDimensions(data);
+    const pixels = dimensions.width * dimensions.height;
+    if (!Number.isSafeInteger(pixels) ||
+        dimensions.width > MAX_PROJECT_IMAGE_DIMENSION ||
+        dimensions.height > MAX_PROJECT_IMAGE_DIMENSION || pixels > MAX_PROJECT_IMAGE_PIXELS) {
+        throw new Error(`${label}尺寸超过项目导入限制`);
+    }
+    const totalPixels = budget.pixels + pixels;
+    if (totalPixels > MAX_PROJECT_TOTAL_IMAGE_PIXELS) {
+        throw new Error('项目图像总像素超过导入限制');
+    }
+    const image = await loadPaintImage(data);
+    if (!projectImageDimensionsMatch(data, dimensions, {
+        width: image.naturalWidth,
+        height: image.naturalHeight
+    })) {
+        throw new Error(`${label}图像头部尺寸与实际图像不一致`);
+    }
+    budget.pixels = totalPixels;
+    return { data, image };
+}
+
+function validateProjectControls(controls) {
+    if (!controls || typeof controls !== 'object' || Array.isArray(controls) ||
+        Object.keys(controls).length > 500) {
+        throw new Error('项目参数格式无效');
+    }
+    const accepted = [];
+    Object.entries(controls).forEach(([id, value]) => {
+        const control = document.getElementById(id);
+        if (!control || !control.closest('.workspace') ||
+            ['button', 'submit', 'reset', 'file', 'hidden'].includes(control.type)) return;
+        if (control.type === 'checkbox') {
+            if (typeof value !== 'boolean') throw new Error(`参数 ${id} 格式无效`);
+        } else if (control.tagName === 'SELECT') {
+            if (typeof value !== 'string' || !Array.from(control.options).some(option => option.value === value)) {
+                throw new Error(`参数 ${id} 不受支持`);
+            }
+        } else if (control.type === 'number' || control.type === 'range') {
+            if (value === '' && control.type === 'number') return accepted.push([control, '']);
+            const numericValue = Number(value);
+            if (!Number.isFinite(numericValue) ||
+                (control.min !== '' && numericValue < Number(control.min)) ||
+                (control.max !== '' && numericValue > Number(control.max))) {
+                throw new Error(`参数 ${id} 超出允许范围`);
+            }
+            value = String(numericValue);
+        } else if (typeof value !== 'string' || value.length > 4096) {
+            throw new Error(`参数 ${id} 格式无效`);
+        }
+        accepted.push([control, value]);
+    });
+    return accepted;
+}
+
+async function restoreProjectSequence(sequence, imageBudget) {
+    if (!Array.isArray(sequence) || sequence.length > 100) {
+        throw new Error('项目序列格式无效或项目包含过多序列项');
+    }
+    const restored = [];
+    for (const [index, item] of sequence.entries()) {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) {
+            throw new Error(`第 ${index + 1} 个序列项格式无效`);
+        }
+        const phase = await loadValidatedProjectImage(
+            item.image, imageBudget, `第 ${index + 1} 个序列项相位图`
+        );
+        if (!phase) throw new Error(`第 ${index + 1} 个序列项缺少相位图`);
+        const patternType = typeof item.patternType === 'string' && item.patternType.length <= 80
+            ? item.patternType
+            : 'pattern';
+        const filename = typeof item.filename === 'string' && item.filename.length <= 200
+            ? item.filename
+            : '';
+        const params = typeof item.params === 'string' && item.params.length <= 500
+            ? item.params
+            : '';
+        const saved = {
+            id: Number.isSafeInteger(item.id) && item.id > 0 ? item.id : Date.now() + index,
+            image: phase.data,
+            patternType,
+            filename,
+            params
+        };
+        if (item.paintAnimation !== undefined) {
+            const animation = item.paintAnimation;
+            const source = await loadValidatedProjectImage(
+                animation?.source, imageBudget, `第 ${index + 1} 个动画源图`
+            );
+            const animationPhase = await loadValidatedProjectImage(
+                animation?.phaseImage, imageBudget, `第 ${index + 1} 个动画相位图`
+            );
+            if (!source || !animationPhase || !Array.isArray(animation.clips)) {
+                throw new Error(`第 ${index + 1} 个绘图动画格式无效`);
+            }
+            const clips = sanitizePaintClips(animation.clips);
+            const durationMs = getPaintTotalDuration(clips);
+            if (durationMs > 60000) throw new Error('项目中的绘图动画时长不能超过 60 秒');
+            const fps = Math.max(1, Math.min(30, Number(animation.fps) || 10));
+            const sourceCanvas = document.createElement('canvas');
+            sourceCanvas.width = source.image.naturalWidth;
+            sourceCanvas.height = source.image.naturalHeight;
+            sourceCanvas.getContext('2d').drawImage(source.image, 0, 0);
+            saved.paintAnimation = {
+                source: sourceCanvas,
+                phaseImage: animationPhase.image,
+                clips,
+                fps,
+                durationMs,
+                frameCount: getPaintFrameCount(clips, fps)
+            };
+        }
+        restored.push(saved);
+    }
+    return restored;
+}
+
+async function restoreProjectCurrentOutput(source, imageBudget) {
+    if (source === null || source === undefined) return null;
+    if (!source || typeof source !== 'object' || Array.isArray(source)) {
+        throw new Error('项目主预览状态无效');
+    }
+    const phase = await loadValidatedProjectImage(source.image, imageBudget, '主预览图');
+    if (!phase) throw new Error('项目主预览图缺少图像');
+    return {
+        image: phase.data,
+        patternType: typeof source.patternType === 'string' && source.patternType.length <= 80
+            ? source.patternType
+            : 'pattern',
+        filename: typeof source.filename === 'string' && source.filename.length <= 200
+            ? source.filename
+            : '',
+        paramsDescription: typeof source.params === 'string' && source.params.length <= 500
+            ? source.params
+            : '',
+        infoFocus: typeof source.infoFocus === 'string' && source.infoFocus.length <= 100
+            ? source.infoFocus
+            : '',
+        infoWavelength: typeof source.infoWavelength === 'string' && source.infoWavelength.length <= 100
+            ? source.infoWavelength
+            : '',
+        decodedImage: phase.image
+    };
+}
+
+async function restoreProjectCGH(source, imageBudget, currentOutput = null) {
+    const empty = {
+        data: {
+            targetImage: null,
+            cghImage: null,
+            regeneratedImage: null,
+            lightShapeImage: null,
+            filename: null
+        },
+        targetLabel: '',
+        target: null,
+        phase: null,
+        regenerated: null,
+        lightShape: null
+    };
+    if (source === null || source === undefined) return empty;
+    if (!source || typeof source !== 'object' || Array.isArray(source)) {
+        throw new Error('项目 CGH 状态无效');
+    }
+    const target = await loadValidatedProjectImage(
+        source.target_image, imageBudget, 'CGH 目标图'
+    );
+    let phase;
+    if (source.phase_image_ref === 'current_output') {
+        if (!currentOutput) throw new Error('项目 CGH 相位图引用无效');
+        phase = { data: currentOutput.image, image: currentOutput.decodedImage };
+    } else {
+        if (source.phase_image_ref !== null && source.phase_image_ref !== undefined) {
+            throw new Error('项目 CGH 相位图引用无效');
+        }
+        phase = await loadValidatedProjectImage(
+            source.phase_image, imageBudget, 'CGH 相位图'
+        );
+    }
+    const regenerated = await loadValidatedProjectImage(
+        source.regenerated_image, imageBudget, 'CGH 重建图'
+    );
+    const lightShape = await loadValidatedProjectImage(
+        source.light_shape_image, imageBudget, 'CGH 光斑图'
+    );
+    return {
+        data: {
+            targetImage: target?.data || null,
+            cghImage: phase?.data || null,
+            regeneratedImage: regenerated?.data || null,
+            lightShapeImage: lightShape?.data || null,
+            filename: typeof source.filename === 'string' && source.filename.length <= 200
+                ? source.filename
+                : null
+        },
+        targetLabel: typeof source.target_label === 'string'
+            ? source.target_label.slice(0, 200)
+            : '',
+        target,
+        phase,
+        regenerated,
+        lightShape
+    };
+}
+
+function drawProjectPreview(canvasId, placeholderId, image) {
+    const canvas = document.getElementById(canvasId);
+    const placeholder = document.getElementById(placeholderId);
+    if (!canvas || !placeholder) return;
+    if (!image) {
+        canvas.style.display = 'none';
+        placeholder.style.display = 'block';
+        return;
+    }
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    canvas.getContext('2d').drawImage(image, 0, 0);
+    canvas.style.display = 'block';
+    placeholder.style.display = 'none';
+}
+
+function restoreProjectCGHView(restored) {
+    const cghTargetPath = document.getElementById('cgh_target_path');
+    cghTargetPath.value = restored.targetLabel;
+    const targetImage = document.getElementById('cgh_target_image');
+    const targetPlaceholder = document.getElementById('cgh_target_placeholder');
+    if (restored.target) {
+        targetImage.src = restored.target.data;
+        targetImage.style.display = 'block';
+        targetPlaceholder.style.display = 'none';
+    } else {
+        targetImage.removeAttribute('src');
+        targetImage.style.display = 'none';
+        targetPlaceholder.style.display = 'block';
+    }
+    drawProjectPreview('cgh_light_canvas', 'cgh_light_placeholder', restored.lightShape?.image);
+    drawProjectPreview('cgh_regenerate_canvas', 'cgh_regenerate_placeholder', restored.regenerated?.image);
+    document.getElementById('cgh_download_btn').disabled = !restored.data.filename;
+    document.getElementById('cgh_send_btn').disabled = !restored.data.cghImage;
+    document.getElementById('cgh_image_info').textContent = restored.data.cghImage
+        ? '已恢复项目中的 CGH 相位图'
+        : '等待生成...';
+}
+
+async function restoreWorkflowProject(project) {
+    if (!project || project.format !== 'slmjomo-project' || ![1, 2].includes(project.version)) {
+        throw new Error('项目文件格式或版本不受支持');
+    }
+    const controls = validateProjectControls(project.controls);
+    const imageBudget = { pixels: 0 };
+    const uploadedProjectImage = await loadValidatedProjectImage(
+        project.uploaded_image, imageBudget, '上传图像'
+    );
+    const sequence = await restoreProjectSequence(project.sequence, imageBudget);
+    const uploadedImage = uploadedProjectImage?.data || null;
+    const currentOutput = project.version >= 2
+        ? await restoreProjectCurrentOutput(project.current_output, imageBudget)
+        : null;
+    const cgh = project.version >= 2
+        ? await restoreProjectCGH(project.cgh, imageBudget, currentOutput)
+        : await restoreProjectCGH(null, imageBudget);
+    const spotArraySnapshot = Object.prototype.hasOwnProperty.call(project, 'spot_array')
+        ? project.spot_array
+        : null;
+    const projectControlValues = Object.fromEntries(
+        controls.map(([control, value]) => [control.id, value])
+    );
+    const validatedSpotArray = typeof validateSpotArrayProjectState === 'function'
+        ? validateSpotArrayProjectState(spotArraySnapshot, projectControlValues)
+        : null;
+
+    controls.forEach(([control, value]) => {
+        if (control.type === 'checkbox') control.checked = value;
+        else control.value = value;
+    });
+    document.getElementById('focus_slider').value = document.getElementById('focus_mm').value;
+    document.getElementById('rotation_slider').value = document.getElementById('rotation_degree').value;
+    setWavelength(document.getElementById('wavelength_nm').value);
+    if (typeof restoreSpotArrayProjectState === 'function') {
+        restoreSpotArrayProjectState(spotArraySnapshot, validatedSpotArray);
+    }
+    toggleThreeSpotOptimization();
+    initializeThreeSpotDammannInfo();
+    toggleThreeSpotOptimization('tsn');
+    initializeThreeSpotDammannInfo('tsn');
+    toggleConverterSizeInputs();
+    toggleBeamRadiusInput();
+    updateCylindricalDiag();
+    updateDoubleRingRadiusLimits();
+    renderDoubleRingTargetPreview();
+    AppState.uploadedImage = uploadedImage;
+    const preview = document.getElementById('image_preview');
+    const previewImage = document.getElementById('preview_img');
+    const dropZone = document.getElementById('drop_zone');
+    if (uploadedImage) {
+        previewImage.src = uploadedImage;
+        preview.style.display = 'block';
+        dropZone.style.display = 'none';
+    } else {
+        removeImage();
+    }
+    stopSequence();
+    AppState.sequenceList = sequence;
+    updateSequenceList();
+    AppState.cghData = cgh.data;
+    restoreProjectCGHView(cgh);
+    const placeholder = document.querySelector('.preview-container .placeholder');
+    if (currentOutput) {
+        displayPhaseImage(currentOutput.image);
+        AppState.currentImageData = {
+            image: currentOutput.image,
+            filename: currentOutput.filename,
+            paramsDescription: currentOutput.paramsDescription
+        };
+        AppState.currentPatternType = currentOutput.patternType;
+        document.getElementById('download_btn').disabled = !currentOutput.filename;
+        document.getElementById('info_focus').textContent = currentOutput.infoFocus ||
+            currentOutput.patternType.toUpperCase();
+        document.getElementById('info_wavelength').textContent = currentOutput.infoWavelength || 'N/A';
+        document.getElementById('info_resolution').textContent =
+            currentOutput.decodedImage.naturalWidth + ' × ' + currentOutput.decodedImage.naturalHeight;
+        document.getElementById('info_time').textContent = project.saved_at || '';
+    } else {
+        AppState.currentImageData = null;
+        AppState.currentPatternType = null;
+        const phaseImage = document.getElementById('phase_image');
+        phaseImage.removeAttribute('src');
+        phaseImage.style.display = 'none';
+        if (placeholder) placeholder.style.display = 'block';
+        document.getElementById('download_btn').disabled = true;
+        document.getElementById('info_focus').textContent = 'N/A';
+        document.getElementById('info_wavelength').textContent = 'N/A';
+        document.getElementById('info_resolution').textContent = '-';
+        document.getElementById('info_time').textContent = '';
+    }
 }
 
 function loadRecentPattern(patternId) {
-    showNotification(`加载预设: ${patternId}`, 'info');
+    const item = AppState.history.find(record => Number(record.id) === Number(patternId));
+    if (!item) {
+        showNotification('该历史记录已不可用', 'warning');
+        return;
+    }
+    loadHistoryOutput(item);
 }
 
 // ==================== 傅里叶面强度模拟 ====================
@@ -1856,45 +2631,300 @@ function downloadFourierResult() {
 }
 
 // ==================== 历史记录 ====================
-function addToHistory(params) {
-    const historyList = document.getElementById('history_list');
-    const historyItem = document.createElement('div');
-    historyItem.className = 'history-item';
-    const focus = params.focus_mm ?? params.focal_length;
-    const wavelength = params.wavelength_nm ?? params.wavelength;
-    const summary = Number.isFinite(focus) && Number.isFinite(wavelength)
-        ? `f=${focus}mm, λ=${wavelength}nm`
-        : (AppState.currentPatternType || 'pattern');
-    historyItem.innerHTML = `
-        <div>${summary}</div>
-        <div>${new Date().toLocaleTimeString('zh-CN')}</div>
-    `;
-    historyList.insertBefore(historyItem, historyList.firstChild);
-
-    // 保持最多10条记录
-    while (historyList.children.length > 10) {
-        historyList.removeChild(historyList.lastChild);
-    }
+function addToHistory() {
+    loadHistory();
 }
 
 function loadHistory() {
-    // 从服务器加载历史记录
     fetch('/api/history')
-        .then(response => response.json())
-        .then(data => {
-            if (data.success && data.history.length > 0) {
-                const historyList = document.getElementById('history_list');
-                historyList.innerHTML = data.history.slice(0, 5).map(item => `
-                    <div class="history-item">
-                        <div>${item.focus_mm > 0 && item.wavelength_nm > 0
-                            ? `f=${item.focus_mm}mm, λ=${item.wavelength_nm}nm`
-                            : item.config_name}</div>
-                        <div>${item.created_at}</div>
-                    </div>
-                `).join('');
-            }
+        .then(response => {
+            if (!response.ok) throw new Error('历史记录加载失败');
+            return response.json();
         })
-        .catch(error => console.error('加载历史失败:', error));
+        .then(data => {
+            if (!data.success || !Array.isArray(data.history)) throw new Error('历史记录格式无效');
+            AppState.history = data.history;
+            renderHistory(data.history);
+        })
+        .catch(error => {
+            AppState.history = [];
+            renderHistory([]);
+            console.error('加载历史失败:', error);
+        });
+}
+
+function formatHistorySummary(item) {
+    const focus = Number(item.focus_mm);
+    const wavelength = Number(item.wavelength_nm);
+    if (Number.isFinite(focus) && focus > 0 && Number.isFinite(wavelength) && wavelength > 0) {
+        return 'f=' + focus + 'mm, λ=' + wavelength + 'nm';
+    }
+    return typeof item.config_name === 'string' && item.config_name
+        ? item.config_name
+        : '历史记录 #' + item.id;
+}
+
+function createHistoryEntry(item) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'history-entry';
+    button.setAttribute('aria-label', '加载历史相位图: ' + formatHistorySummary(item));
+    const label = document.createElement('span');
+    label.textContent = formatHistorySummary(item);
+    const timestamp = document.createElement('time');
+    timestamp.textContent = typeof item.created_at === 'string' ? item.created_at : '';
+    button.append(label, timestamp);
+    button.addEventListener('click', () => loadHistoryOutput(item));
+    return button;
+}
+
+function renderHistory(history) {
+    const historyList = document.getElementById('history_list');
+    const recentList = document.getElementById('recent_patterns');
+    if (!historyList || !recentList) return;
+    historyList.replaceChildren();
+    recentList.replaceChildren();
+    if (history.length === 0) {
+        const emptyHistory = document.createElement('div');
+        emptyHistory.className = 'history-empty';
+        emptyHistory.textContent = '暂无生成历史';
+        historyList.append(emptyHistory);
+        const emptyRecent = document.createElement('li');
+        emptyRecent.className = 'recent-empty';
+        emptyRecent.textContent = '暂无生成历史';
+        recentList.append(emptyRecent);
+        return;
+    }
+
+    history.slice(0, 5).forEach(item => {
+        historyList.append(createHistoryEntry(item));
+        const listItem = document.createElement('li');
+        const recentEntry = createHistoryEntry(item);
+        recentEntry.className = 'recent-pattern-entry';
+        const timestamp = recentEntry.querySelector('time');
+        timestamp.className = 'pattern-time';
+        const label = recentEntry.querySelector('span');
+        label.className = 'pattern-name';
+        listItem.append(recentEntry);
+        recentList.append(listItem);
+    });
+}
+
+function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('无法读取历史相位图'));
+        reader.readAsDataURL(blob);
+    });
+}
+
+async function loadHistoryOutput(item) {
+    const storedPath = typeof item?.output_file === 'string' ? item.output_file : '';
+    const filename = storedPath.replace(/\\/g, '/').split('/').pop();
+    if (!filename || filename === '.' || filename === '..' ||
+        !/^[A-Za-z0-9_.-]+\.(bmp|png|jpe?g|webp|tiff?)$/i.test(filename)) {
+        showNotification('历史记录中的输出文件名无效', 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/download/' + encodeURIComponent(filename));
+        if (!response.ok) throw new Error('输出文件不存在或已被移除');
+        const imageData = await blobToDataUrl(await response.blob());
+        const image = await loadPaintImage(imageData);
+        const parametersRestored = restoreHistoryParameters(item.parameters);
+        displayPhaseImage(imageData);
+        AppState.currentPatternType = parametersRestored
+            ? item.parameters.pattern_type
+            : 'history';
+        AppState.currentImageData = {
+            image: imageData,
+            filename,
+            paramsDescription: formatHistorySummary(item)
+        };
+        document.getElementById('download_btn').disabled = false;
+        document.getElementById('info_focus').textContent = Number(item.focus_mm) > 0
+            ? item.focus_mm + ' mm'
+            : (item.config_name || '历史记录');
+        document.getElementById('info_wavelength').textContent = Number(item.wavelength_nm) > 0
+            ? item.wavelength_nm + ' nm'
+            : 'N/A';
+        document.getElementById('info_resolution').textContent =
+            image.naturalWidth + ' × ' + image.naturalHeight;
+        document.getElementById('info_time').textContent = item.created_at || '';
+        showNotification(parametersRestored
+            ? '历史相位图和可用参数已恢复；源图像不保存在历史记录中'
+            : '历史相位图已加载；此记录没有可恢复的参数快照', 'info');
+    } catch (error) {
+        showNotification('历史相位图加载失败: ' + error.message, 'error');
+    }
+}
+
+function restoreHistoryParameters(snapshot) {
+    if (!snapshot || snapshot.version !== 1 || typeof snapshot.pattern_type !== 'string' ||
+        !snapshot.parameters || typeof snapshot.parameters !== 'object' ||
+        Array.isArray(snapshot.parameters)) return false;
+    const values = snapshot.parameters;
+    const mapped = {};
+    const take = (controlId, ...keys) => {
+        const key = keys.find(candidate => Object.prototype.hasOwnProperty.call(values, candidate));
+        if (!key) return;
+        const value = values[key];
+        mapped[controlId] = value === null ? '' :
+            (typeof value === 'boolean' ? value : String(value));
+    };
+    const dimensions = (widthId, heightId) => {
+        take(widthId, 'width', 'x_pixels');
+        take(heightId, 'height', 'y_pixels');
+    };
+
+    switch (snapshot.pattern_type) {
+        case 'fresnel':
+            take('focus_mm', 'focus_mm', 'focal_length');
+            take('wavelength_nm', 'wavelength_nm', 'wavelength');
+            take('x_pixels', 'x_pixels', 'width');
+            take('y_pixels', 'y_pixels', 'height');
+            take('pitch_mode');
+            take('rotation_degree');
+            take('offset_x');
+            take('offset_y');
+            take('scale_factor');
+            break;
+        case 'fresnel_three_spots':
+        case 'three_spots': {
+            const prefix = snapshot.pattern_type === 'three_spots' ? 'tsn' : 'three_spot';
+            take(`${prefix}_focus`, 'focal_length');
+            take(`${prefix}_wavelength`, 'wavelength');
+            take(`${prefix}_spacing`, 'spot_spacing');
+            take(`${prefix}_count`, 'spot_count');
+            take(`${prefix}_pixel_size`, 'pixel_size_um');
+            take(`${prefix}_algorithm`, 'algorithm');
+            take(`${prefix}_beam_diameter`, 'incident_beam_diameter_mm');
+            take(`${prefix}_radius`, 'spot_radius_mm');
+            take(`${prefix}_iterations`, 'iterations');
+            take(`${prefix}_phase_direction`, 'phase_direction');
+            dimensions(`${prefix}_width`, `${prefix}_height`);
+            if (snapshot.pattern_type === 'fresnel_three_spots') {
+                take('three_spot_algorithm', 'algorithm');
+            }
+            break;
+        }
+        case 'axicon':
+            take('axicon_radius', 'radius');
+            dimensions('axicon_width', 'axicon_height');
+            break;
+        case 'cylindrical':
+            take('cylindrical_focal_length', 'focal_length');
+            take('cylindrical_wavelength', 'wavelength');
+            take('cylindrical_pixel_size', 'pixel_size', 'pixel_size_um');
+            if (mapped.cylindrical_pixel_size !== undefined) {
+                mapped.cylindrical_pixel_size = String(Number(mapped.cylindrical_pixel_size) * 1000);
+            }
+            take('cylindrical_angle', 'angle');
+            dimensions('cylindrical_width', 'cylindrical_height');
+            break;
+        case 'blaze':
+        case 'sine': {
+            const prefix = snapshot.pattern_type;
+            take(`${prefix}_period`, 'period');
+            take(`${prefix}_angle`, 'angle');
+            dimensions(`${prefix}_width`, `${prefix}_height`);
+            break;
+        }
+        case 'vortex':
+            take('vortex_lnumber', 'lnumber');
+            dimensions('vortex_width', 'vortex_height');
+            break;
+        case 'random':
+            take('random_seed', 'seed');
+            dimensions('random_width', 'random_height');
+            break;
+        case 'divide':
+            take('divide_gray1', 'grayvalue1');
+            take('divide_gray2', 'grayvalue2');
+            dimensions('divide_width', 'divide_height');
+            break;
+        case 'cross':
+            take('cross_background_phase', 'background_phase');
+            take('cross_stripe_phase', 'stripe_phase');
+            take('cross_stripe_width', 'stripe_width');
+            take('cross_stripe_spacing', 'stripe_spacing');
+            take('cross_stripe_number', 'stripe_number');
+            take('cross_intersection_phase', 'intersection_phase');
+            dimensions('cross_width', 'cross_height');
+            break;
+        case 'double_ring':
+            dimensions('double_ring_width', 'double_ring_height');
+            take('double_ring_inner_radius', 'inner_radius');
+            take('double_ring_outer_radius', 'outer_radius');
+            take('double_ring_inner_width', 'inner_width');
+            take('double_ring_outer_width', 'outer_width');
+            take('double_ring_inner_intensity', 'inner_intensity');
+            take('double_ring_outer_intensity', 'outer_intensity');
+            take('double_ring_between_intensity', 'between_intensity');
+            take('double_ring_iterations', 'iterations');
+            break;
+        case 'cgh':
+            take('cgh_algorithm', 'algorithm');
+            take('cgh_light_shape', 'light_shape');
+            take('cgh_light_size', 'light_size');
+            take('cgh_repetition', 'iterations');
+            take('cgh_width', 'width');
+            take('cgh_height', 'height');
+            take('cgh_gaussian_spots', 'gaussian_spots');
+            take('cgh_spot_radius', 'spot_radius');
+            break;
+        case 'converter':
+            take('converter_width', 'width');
+            take('converter_height', 'height');
+            take('converter_grayscale', 'grayscale');
+            break;
+        default:
+            return false;
+    }
+
+    let controls;
+    let spotArrayState = null;
+    try {
+        controls = validateProjectControls(mapped);
+        if (snapshot.pattern_type === 'fresnel_three_spots' && Array.isArray(values.target_spots)) {
+            const controlValues = Object.fromEntries(
+                controls.map(([control, value]) => [control.id, value])
+            );
+            const spotSnapshot = {
+                customized: true,
+                legacyAlgorithm: values.legacy_algorithm || 'uniform_grating',
+                spots: values.target_spots
+            };
+            spotArrayState = validateSpotArrayProjectState(spotSnapshot, controlValues);
+        }
+    } catch (error) {
+        console.warn('历史参数快照无法恢复:', error);
+        return false;
+    }
+
+    controls.forEach(([control, value]) => {
+        if (control.type === 'checkbox') control.checked = value;
+        else control.value = value;
+    });
+    if (Object.prototype.hasOwnProperty.call(mapped, 'focus_mm')) {
+        document.getElementById('focus_slider').value = document.getElementById('focus_mm').value;
+    }
+    if (Object.prototype.hasOwnProperty.call(mapped, 'rotation_degree')) {
+        document.getElementById('rotation_slider').value = document.getElementById('rotation_degree').value;
+    }
+    if (Object.prototype.hasOwnProperty.call(mapped, 'wavelength_nm')) {
+        setWavelength(document.getElementById('wavelength_nm').value);
+    }
+    if (spotArrayState && typeof restoreSpotArrayProjectState === 'function') {
+        restoreSpotArrayProjectState({
+            customized: true,
+            legacyAlgorithm: values.legacy_algorithm || 'uniform_grating',
+            spots: values.target_spots
+        }, spotArrayState);
+    }
+    return true;
 }
 
 // ==================== 通知系统 ====================

@@ -2,21 +2,28 @@
 
 Covers: fresnel generate -> sequence -> vortex generate -> sequence play/pause/stop
 -> BMP converter upload+convert -> Fourier simulation -> simulated device connect.
-Emits screenshots, step results JSON and a WebM video under artifacts/ui_demo_v2/.
+Starts an isolated Flask server and writes screenshots, results, and video to a
+temporary output directory.
 """
 from pathlib import Path
 import json
 import sys
+import tempfile
 from playwright.sync_api import sync_playwright
+from browser_test_support import isolated_app_server
 
 ROOT = Path(__file__).resolve().parent
-OUT = ROOT / "artifacts" / "ui_demo_v2"
+OUT = Path(tempfile.mkdtemp(prefix="slmjomo-ui-demo-v2-"))
 OUT.mkdir(parents=True, exist_ok=True)
-BASE = "http://127.0.0.1:5000/"
 DEMO_IMG = ROOT / "51b2910d476a104e754dc08e7efcfd1e.jpg"
 
 
 def main() -> int:
+    with isolated_app_server() as (base_url, _temporary_root):
+        return run_demo(base_url)
+
+
+def run_demo(base_url: str) -> int:
     console_errors = []
     failed_requests = []
     steps = []
@@ -47,7 +54,7 @@ def main() -> int:
         # P0-1 home
         # Note: the page auto-fires a double-ring preview POST ~350ms after load
         # (pro_main.js init). Let it settle so it does not collide with demo clicks.
-        page.goto(BASE, wait_until="networkidle")
+        page.goto(base_url, wait_until="networkidle")
         page.wait_for_timeout(1500)
         snap("01_home")
 
@@ -132,7 +139,8 @@ def main() -> int:
 
     auto_preview_noise = [r for r in failed_requests if "double_ring" in r]
     real_failures = [r for r in failed_requests if "double_ring" not in r]
-    result = {"base_url": BASE, "steps": steps, "console_errors": console_errors,
+    result = {"base_url": base_url, "output_dir": str(OUT),
+              "steps": steps, "console_errors": console_errors,
               "failed_requests": real_failures,
               "known_noise_auto_double_ring_preview": auto_preview_noise,
               "video_path": str(video_path) if video_path else None}

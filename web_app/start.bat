@@ -9,7 +9,7 @@ echo.
 cd /d "%~dp0"
 
 echo [1/2] Check dependencies...
-pip install -r requirements.txt --quiet
+python -m pip install -r requirements.txt --quiet
 
 echo [2/2] Start the Web server...
 echo.

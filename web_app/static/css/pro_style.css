@@ -88,6 +88,15 @@ body {
     font-weight: 600;
 }
 
+.menu-item[aria-disabled="true"] {
+    color: rgba(255, 255, 255, 0.62);
+    cursor: not-allowed;
+}
+
+.menu-item[aria-disabled="true"]:hover {
+    background: transparent;
+}
+
 .status-bar {
     display: flex;
     align-items: center;
@@ -219,6 +228,78 @@ body {
 
 .recent-list li:hover {
     background: #e9ecef;
+}
+
+.recent-list .recent-empty {
+    color: var(--text-secondary);
+    cursor: default;
+}
+
+.recent-pattern-entry {
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
+}
+
+.recent-pattern-entry:focus-visible,
+.history-entry:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: -2px;
+}
+
+.preset-list .preset-entry {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px;
+}
+
+.preset-list .preset-empty {
+    color: var(--text-secondary);
+    cursor: default;
+    font-size: 0.82em;
+}
+
+.preset-apply {
+    flex: 1;
+    min-width: 0;
+    padding: 4px;
+    border: 0;
+    background: transparent;
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+}
+
+.preset-apply:hover {
+    color: var(--primary-color);
+}
+
+.preset-meta {
+    display: block;
+    margin-top: 3px;
+    color: var(--text-secondary);
+    font-size: 0.76em;
+}
+
+.preset-delete {
+    width: 28px;
+    height: 28px;
+    flex: 0 0 28px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: #fff;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.preset-delete:hover {
+    border-color: var(--error-color);
+    color: var(--error-color);
 }
 
 .pattern-name {
@@ -380,6 +461,93 @@ body {
     border-radius: 50%;
     background: var(--primary-color);
     box-shadow: 0 0 0 4px rgba(0, 102, 204, 0.12);
+}
+
+.spot-array-editor {
+    margin: 14px 0 18px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-color);
+}
+
+.spot-array-editor-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-size: 0.84rem;
+}
+
+.spot-array-editor-header span {
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+}
+
+.spot-array-canvas-frame {
+    width: 100%;
+    aspect-ratio: 10 / 7;
+    overflow: hidden;
+    background: #151a20;
+    border: 1px solid #39434d;
+    border-radius: 4px;
+}
+
+#three_spot_editor {
+    display: block;
+    width: 100%;
+    height: 100%;
+    touch-action: none;
+    cursor: grab;
+}
+
+#three_spot_editor:active {
+    cursor: grabbing;
+}
+
+.spot-array-status {
+    min-height: 32px;
+    padding: 6px 0;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    line-height: 1.4;
+}
+
+.spot-array-status.error {
+    color: var(--error-color);
+}
+
+.spot-array-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+.spot-array-toolbar .btn {
+    flex: 1 1 30%;
+    min-height: 34px;
+    justify-content: center;
+    padding: 6px 8px;
+    font-size: 0.78rem;
+}
+
+.spot-array-details {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.spot-array-details .param-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.spot-array-details .param-input,
+.spot-array-details .param-select {
+    width: 100%;
+    min-width: 0;
 }
 
 .param-item {
@@ -946,6 +1114,44 @@ body {
     border-radius: 4px;
     max-height: 200px;
     overflow-y: auto;
+}
+
+.history-entry {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 10px;
+    border: 0;
+    border-bottom: 1px solid var(--border-color);
+    border-radius: 0;
+    background: transparent;
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+}
+
+.history-entry:hover {
+    background: #eef3f6;
+}
+
+.history-entry span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.history-entry time {
+    flex: 0 0 auto;
+    color: var(--text-secondary);
+    font-size: 0.78em;
+    white-space: nowrap;
+}
+
+.history-empty {
+    padding: 10px;
+    color: var(--text-secondary);
+    font-size: 0.85em;
 }
 
 /* ==================== 底部状态栏 ==================== */

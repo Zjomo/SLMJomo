@@ -1,69 +1,93 @@
-import ctypes
-from ctypes import *
+"""Run a vendor-SDK communication smoke test when invoked as a script.
 
+Importing this module never loads the vendor DLL or opens hardware.
+"""
 
-# 1. 加载 DLL（python 调用C语言编写的DLL文件库）
-dll = ctypes.CDLL("./DLL/hpkSLMdaLV.dll")  # cdecl
+from ctypes import POINTER, byref, c_char_p, c_double, c_int32, c_uint8, create_string_buffer
 
+if __package__:
+    from .sdk_loader import load_vendor_dll
+else:
+    from sdk_loader import load_vendor_dll
 
-# 2. 定义函数原型【定义输入参数、输出参数的类型】
-# 打开设备，并返回设备数量
-# int32_t Open_Dev(uint8_t bIDList[], int32_t bIDSize)
-dll.Open_Dev.argtypes = [POINTER(c_uint8), c_int32]
-dll.Open_Dev.restype  = c_int32
-
-
-# 关闭设备
-# int32_t Close_Dev(uint8_t bIDList[], int32_t bIDSize)
-dll.Close_Dev.argtypes = [POINTER(c_uint8), c_int32]
-dll.Close_Dev.restype  = c_int32
-
-# 读取设备的序列号
-# int32_t Check_HeadSerial(uint8_t bID, char HeadSerial[], int32_t CharSize)
-dll.Check_HeadSerial.argtypes = [c_uint8, c_char_p, c_int32]
-dll.Check_HeadSerial.restype  = c_int32
-
-# 读取设备头部和控制板的温度
-# int32_t Check_Temp(uint8_t bID, double *HeadTemp, double *CBTemp)
-dll.Check_Temp.argtypes = [c_uint8, POINTER(c_double), POINTER(c_double)]
-dll.Check_Temp.restype  = c_int32
-
-
-# 3. 通信验证流程
-# 假设最多连接 4 台设备
 MAX_DEV = 4
-bID_list = (c_uint8 * MAX_DEV)()
+SERIAL_BUFFER_SIZE = 11
 
-# ---- Step 1: 打开设备 ----
-dev_count = dll.Open_Dev(bID_list, MAX_DEV)
-print("已连接的设备数为:", dev_count)
 
-if dev_count <= 0:
-    raise RuntimeError("❌ 未检测到 LCOS-SLM 设备")
+def configure_sdk_functions(dll):
+    """Declare the ctypes interface used by this smoke test."""
+    dll.Open_Dev.argtypes = [POINTER(c_uint8), c_int32]
+    dll.Open_Dev.restype = c_int32
 
-bID = bID_list[0]
-print("设备通信序号:", bID)
+    dll.Close_Dev.argtypes = [POINTER(c_uint8), c_int32]
+    dll.Close_Dev.restype = c_int32
 
-# ---- Step 2: 读取头部序列号 ----
-serial_buf = create_string_buffer(11)  # 固定 11 字符
-ret = dll.Check_HeadSerial(bID, serial_buf, 11)
+    dll.Check_HeadSerial.argtypes = [c_uint8, c_char_p, c_int32]
+    dll.Check_HeadSerial.restype = c_int32
 
-if ret != 1:
-    raise RuntimeError("❌ 读取 Head Serial 失败")
+    dll.Check_Temp.argtypes = [c_uint8, POINTER(c_double), POINTER(c_double)]
+    dll.Check_Temp.restype = c_int32
 
-print("设备头部序号:", serial_buf.value.decode())
 
-# ---- Step 3: 读取温度 ----
-head_temp = c_double()
-cb_temp   = c_double()
+def run_smoke_test(dll=None, output=print):
+    """Open the connected device, read its identity and temperatures, then close it.
 
-ret = dll.Check_Temp(bID, byref(head_temp), byref(cb_temp))
-if ret != 1:
-    raise RuntimeError("❌ 读取温度失败")
+    Pass a DLL-compatible test double to exercise the workflow without hardware.
+    """
+    if dll is None:
+        dll = load_vendor_dll()
+    configure_sdk_functions(dll)
 
-print(f"Head Temp: {head_temp.value:.2f} °C")
-print(f"Board Temp: {cb_temp.value:.2f} °C")
+    device_ids = (c_uint8 * MAX_DEV)()
+    device_count = dll.Open_Dev(device_ids, MAX_DEV)
+    output(f"已连接的设备数为: {device_count}")
+    if device_count <= 0:
+        raise RuntimeError("未检测到 LCOS-SLM 设备")
 
-# ---- Step 4: 关闭设备 ----
-dll.Close_Dev(bID_list, dev_count)
-print("✅ 通信验证完成，设备已关闭")
+    close_count = min(device_count, MAX_DEV)
+    try:
+        if device_count > MAX_DEV:
+            raise RuntimeError(
+                f"SDK 返回了 {device_count} 台设备，超过缓冲区容量 {MAX_DEV}"
+            )
+
+        device_id = device_ids[0]
+        output(f"设备通信序号: {device_id}")
+
+        serial_buffer = create_string_buffer(SERIAL_BUFFER_SIZE)
+        result = dll.Check_HeadSerial(
+            device_id, serial_buffer, SERIAL_BUFFER_SIZE
+        )
+        if result != 1:
+            raise RuntimeError("读取 Head Serial 失败")
+        serial = serial_buffer.value.decode(errors="replace")
+        output(f"设备头部序号: {serial}")
+
+        head_temperature = c_double()
+        board_temperature = c_double()
+        result = dll.Check_Temp(
+            device_id, byref(head_temperature), byref(board_temperature)
+        )
+        if result != 1:
+            raise RuntimeError("读取温度失败")
+
+        output(f"Head Temp: {head_temperature.value:.2f} °C")
+        output(f"Board Temp: {board_temperature.value:.2f} °C")
+        return {
+            "device_count": device_count,
+            "device_id": device_id,
+            "serial": serial,
+            "head_temperature": head_temperature.value,
+            "board_temperature": board_temperature.value,
+        }
+    finally:
+        dll.Close_Dev(device_ids, close_count)
+        output("通信验证结束，已请求关闭设备")
+
+
+def main():
+    run_smoke_test()
+
+
+if __name__ == "__main__":
+    main()

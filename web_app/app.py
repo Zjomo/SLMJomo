@@ -9,20 +9,27 @@ import numpy as np
 from PIL import Image
 import io
 import base64
+import math
 import os
 from datetime import datetime
 import json
 from functools import lru_cache
 from scipy import ndimage
+from sqlalchemy import inspect
 
 # 创建Flask应用
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'fresnel_lens_secret_key_2026'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///fresnel_config.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get(
+    'SLMJOMO_DATABASE_URI', 'sqlite:///fresnel_config.db'
+)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # 输出目录（绝对路径，确保保存和下载路径一致）
-OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output_phase_patterns')
+OUTPUT_DIR = os.environ.get(
+    'SLMJOMO_OUTPUT_DIR',
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output_phase_patterns')
+)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # 初始化数据库
@@ -74,9 +81,14 @@ class GenerationHistory(db.Model):
     wavelength_nm = db.Column(db.Float)
     input_image = db.Column(db.String(200))
     output_file = db.Column(db.String(200))
+    parameters_json = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def to_dict(self):
+        try:
+            parameters = json.loads(self.parameters_json) if self.parameters_json else None
+        except (TypeError, ValueError):
+            parameters = None
         return {
             'id': self.id,
             'config_name': self.config_name,
@@ -84,8 +96,81 @@ class GenerationHistory(db.Model):
             'wavelength_nm': self.wavelength_nm,
             'input_image': self.input_image,
             'output_file': self.output_file,
+            'parameters': parameters,
             'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S')
         }
+
+
+HISTORY_PARAMETER_FIELDS = {
+    'focus_mm', 'wavelength_nm', 'focal_length', 'wavelength',
+    'x_pixels', 'y_pixels', 'width', 'height', 'pitch_mode',
+    'rotation_degree', 'offset_x', 'offset_y', 'scale_factor',
+    'pixel_size', 'pixel_size_um', 'spot_spacing', 'spot_count',
+    'algorithm', 'legacy_algorithm', 'incident_beam_diameter_mm', 'spot_radius_mm',
+    'iterations', 'phase_direction', 'target_spots', 'radius', 'angle',
+    'period', 'lnumber', 'seed', 'grayvalue1', 'grayvalue2',
+    'background_phase', 'stripe_phase', 'stripe_width', 'stripe_spacing',
+    'stripe_number', 'intersection_phase', 'inner_radius', 'outer_radius',
+    'inner_width', 'outer_width', 'inner_intensity', 'outer_intensity',
+    'between_intensity', 'light_shape', 'light_size', 'gaussian_spots',
+    'spot_radius', 'grayscale'
+}
+
+
+def normalize_history_parameters(pattern_type, data):
+    """Keep a small allowlisted parameter snapshot without image payloads."""
+    if not isinstance(data, dict) or not isinstance(pattern_type, str) or len(pattern_type) > 80:
+        return None
+
+    parameters = {}
+    for key in HISTORY_PARAMETER_FIELDS:
+        if key not in data:
+            continue
+        value = data[key]
+        if key == 'target_spots':
+            if not isinstance(value, list) or len(value) > 15:
+                continue
+            spots = []
+            for spot in value:
+                if not isinstance(spot, dict):
+                    spots = []
+                    break
+                point = {axis: spot.get(axis) for axis in ('x_mm', 'y_mm', 'weight')}
+                if any(not isinstance(number, (int, float)) or isinstance(number, bool) or
+                       not math.isfinite(number) or abs(number) > 1_000_000
+                       for number in point.values()):
+                    spots = []
+                    break
+                spots.append(point)
+            if spots:
+                parameters[key] = spots
+        elif value is None or isinstance(value, bool):
+            parameters[key] = value
+        elif isinstance(value, (int, float)):
+            if math.isfinite(value) and abs(value) <= 1_000_000_000:
+                parameters[key] = value
+        elif isinstance(value, str) and len(value) <= 100:
+            parameters[key] = value
+
+    snapshot = {'version': 1, 'pattern_type': pattern_type, 'parameters': parameters}
+    encoded = json.dumps(snapshot, ensure_ascii=False, allow_nan=False, separators=(',', ':'))
+    return snapshot if len(encoded) <= 8192 else None
+
+
+def migrate_generation_history_schema(engine=None):
+    """Add the nullable history snapshot column without rewriting legacy rows."""
+    engine = engine or db.engine
+    if engine.dialect.name != 'sqlite':
+        return
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if 'generation_history' not in inspector.get_table_names():
+            return
+        columns = {column['name'] for column in inspector.get_columns('generation_history')}
+        if 'parameters_json' not in columns:
+            connection.exec_driver_sql(
+                'ALTER TABLE generation_history ADD COLUMN parameters_json TEXT'
+            )
 
 
 # ==================== SLM相位图生成核心 ====================
@@ -235,6 +320,7 @@ class SLMPatternGenerator:
         phase_direction='standard',
         with_lens=True,
         spot_radius_mm=None,
+        target_spots=None,
         **kwargs
     ):
         """Generate a phase-only Fresnel hologram for three horizontal focal spots.
@@ -254,6 +340,13 @@ class SLMPatternGenerator:
             raise ValueError("波长必须大于 0 nm")
         if spot_spacing <= 0:
             raise ValueError("点间距必须大于 0 mm")
+        if target_spots is not None:
+            target_spots = SLMPatternGenerator._normalize_target_spots(target_spots)
+            spot_count = len(target_spots)
+            if algorithm != 'gaussian_wgs':
+                raise ValueError(
+                    "自由二维光斑位置仅支持 gaussian_wgs 算法"
+                )
         if not 2 <= spot_count <= 15:
             raise ValueError("光斑数量必须在 2 到 15 之间")
         if pixel_size_um <= 0:
@@ -273,6 +366,13 @@ class SLMPatternGenerator:
             raise ValueError("迭代次数必须在 1 到 200 之间")
         if algorithm == 'gaussian_wgs' and width * height > 2_500_000:
             raise ValueError("高斯优化分辨率不得超过 250 万像素")
+        if algorithm == 'gaussian_wgs' and target_spots is not None:
+            pixel_count = width * height
+            if pixel_count * spot_count > 20_000_000:
+                raise ValueError("自由阵列点数与分辨率组合过大，请降低分辨率或点数")
+            work_estimate = pixel_count * iterations * (2 + 0.5 * spot_count)
+            if work_estimate > 400_000_000:
+                raise ValueError("自由阵列计算量过大，请降低分辨率、迭代次数或点数")
 
         wavelength_mm = wavelength / 1e6
         pixel_size_mm = pixel_size_um / 1000
@@ -296,7 +396,8 @@ class SLMPatternGenerator:
                 incident_beam_diameter_mm=incident_beam_diameter_mm,
                 iterations=iterations,
                 with_lens=with_lens,
-                spot_radius_mm=spot_radius_mm
+                spot_radius_mm=spot_radius_mm,
+                target_spots=target_spots
             )
         elif algorithm == 'uniform_grating':
             phase = SLMPatternGenerator._uniform_spot_grating_phase(
@@ -351,6 +452,42 @@ class SLMPatternGenerator:
 
         phase = np.mod(phase, 2 * np.pi)
         return np.rint(phase / (2 * np.pi) * 255).astype(np.uint8)
+
+    @staticmethod
+    def _normalize_target_spots(target_spots):
+        if not isinstance(target_spots, (list, tuple)):
+            raise ValueError("光斑坐标必须是二维数组")
+        if not 2 <= len(target_spots) <= 15:
+            raise ValueError("光斑数量必须在 2 到 15 之间")
+
+        normalized = []
+        for index, spot in enumerate(target_spots):
+            if not isinstance(spot, dict):
+                raise ValueError(f"第 {index + 1} 个光斑坐标格式无效")
+            try:
+                x_mm = float(spot['x_mm'])
+                y_mm = float(spot['y_mm'])
+                weight = float(spot.get('weight', 1.0))
+            except (KeyError, TypeError, ValueError):
+                raise ValueError(f"第 {index + 1} 个光斑坐标格式无效")
+            if not np.isfinite(x_mm) or not np.isfinite(y_mm):
+                raise ValueError("光斑坐标必须是有限数值")
+            if not np.isfinite(weight) or not 0.01 <= weight <= 10:
+                raise ValueError("光斑权重必须在 0.01 到 10 之间")
+            normalized.append({
+                'x_mm': x_mm,
+                'y_mm': y_mm,
+                'weight': weight
+            })
+
+        for index, spot in enumerate(normalized):
+            for other in normalized[index + 1:]:
+                if np.hypot(
+                    spot['x_mm'] - other['x_mm'],
+                    spot['y_mm'] - other['y_mm']
+                ) <= 1e-12:
+                    raise ValueError("光斑位置不能重叠")
+        return normalized
 
     @staticmethod
     def _uniform_spot_grating_phase(
@@ -522,7 +659,8 @@ class SLMPatternGenerator:
         incident_beam_diameter_mm,
         iterations,
         with_lens=True,
-        spot_radius_mm=None
+        spot_radius_mm=None,
+        target_spots=None
     ):
         """Optimize three equal-power Gaussian spots in the focal plane."""
         beam_radius = incident_beam_diameter_mm / 2
@@ -535,13 +673,31 @@ class SLMPatternGenerator:
         target_x, target_y = np.meshgrid(output_x, output_y)
 
         output_half_width = min(abs(output_x[0]), abs(output_x[-1]))
-        target_positions = (
-            np.arange(spot_count) - (spot_count - 1) / 2
-        ) * spot_spacing
-        if np.max(np.abs(target_positions)) >= output_half_width:
+        output_half_height = min(abs(output_y[0]), abs(output_y[-1]))
+        if target_spots is None:
+            positions = np.column_stack((
+                (np.arange(spot_count) - (spot_count - 1) / 2) * spot_spacing,
+                np.zeros(spot_count)
+            ))
+            requested_power = np.ones(spot_count, dtype=np.float64)
+        else:
+            target_spots = SLMPatternGenerator._normalize_target_spots(
+                target_spots
+            )
+            positions = np.array([
+                [spot['x_mm'], spot['y_mm']] for spot in target_spots
+            ], dtype=np.float64)
+            requested_power = np.array([
+                spot['weight'] for spot in target_spots
+            ], dtype=np.float64)
+            spot_count = len(target_spots)
+
+        if np.any(np.abs(positions[:, 0]) >= output_half_width) or \
+                np.any(np.abs(positions[:, 1]) >= output_half_height):
             raise ValueError(
-                "最外侧光斑超出当前参数可生成范围 "
-                f"(< {output_half_width:g} mm)"
+                "光斑坐标超出当前参数可生成范围 "
+                f"(X < {output_half_width:g} mm, "
+                f"Y < {output_half_height:g} mm)"
             )
 
         # 1/e^2 intensity waist at the focus, with a sampling floor so the
@@ -560,36 +716,61 @@ class SLMPatternGenerator:
                 raise ValueError(
                     f"指定光斑半径小于当前采样下限 {minimum_waist:g} mm"
                 )
-        if spot_spacing < 2 * target_waist:
+        pair_distances = np.linalg.norm(
+            positions[:, np.newaxis, :] - positions[np.newaxis, :, :],
+            axis=2
+        )
+        pair_distances[pair_distances == 0] = np.inf
+        nearest_distances = np.min(pair_distances, axis=1)
+        if np.any(nearest_distances < 2 * target_waist):
             raise ValueError(
-                f"点间距过小，当前参数至少需要 {2 * target_waist:g} mm "
-                "才能形成可分辨高斯点"
+                f"相邻光斑距离过小，当前参数至少需要 "
+                f"{2 * target_waist:g} mm 才能形成可分辨高斯点"
             )
+        if target_spots is not None and (
+            np.any(np.abs(positions[:, 0]) + 2.5 * target_waist >= output_half_width) or
+            np.any(np.abs(positions[:, 1]) + 2.5 * target_waist >= output_half_height)
+        ):
+            raise ValueError("光斑边缘超出当前参数可生成范围")
         spot_profiles = [
             np.exp(
-                -((target_x - x0) ** 2 + target_y**2) / target_waist**2
+                -((target_x - x0) ** 2 + (target_y - y0) ** 2) /
+                target_waist**2
             ).astype(np.float32)
-            for x0 in target_positions
+            for x0, y0 in positions
         ]
-        radius_x = max(1, int(np.ceil(2.5 * target_waist / output_dx)))
-        radius_y = max(1, int(np.ceil(2.5 * target_waist / output_dy)))
-        center_y = height // 2
         power_regions = []
-        for x0 in target_positions:
+        region_radius = min(
+            2.5 * target_waist,
+            0.45 * float(np.min(nearest_distances))
+        )
+        for x0, y0 in positions:
             center_x = int(np.argmin(np.abs(output_x - x0)))
-            power_regions.append((
-                slice(
-                    max(0, center_y - radius_y),
-                    min(height, center_y + radius_y + 1)
-                ),
-                slice(
-                    max(0, center_x - radius_x),
-                    min(width, center_x + radius_x + 1)
-                )
-            ))
+            center_y = int(np.argmin(np.abs(output_y - y0)))
+            radius_x = max(1, int(np.ceil(region_radius / output_dx)))
+            radius_y = max(1, int(np.ceil(region_radius / output_dy)))
+            y_slice = slice(
+                max(0, center_y - radius_y),
+                min(height, center_y + radius_y + 1)
+            )
+            x_slice = slice(
+                max(0, center_x - radius_x),
+                min(width, center_x + radius_x + 1)
+            )
+            local_x, local_y = np.meshgrid(
+                output_x[x_slice], output_y[y_slice]
+            )
+            mask = (
+                (local_x - x0) ** 2 + (local_y - y0) ** 2
+            ) <= region_radius**2
+            power_regions.append((y_slice, x_slice, mask))
 
+        desired_power = requested_power / np.mean(requested_power)
         weights = np.ones(spot_count, dtype=np.float64)
-        target_amplitude = sum(spot_profiles)
+        target_amplitude = sum(
+            np.sqrt(power) * profile
+            for power, profile in zip(desired_power, spot_profiles)
+        )
         target_amplitude /= np.sqrt(np.sum(target_amplitude**2))
         back_field = np.fft.fftshift(
             np.fft.ifft2(np.fft.ifftshift(target_amplitude))
@@ -606,17 +787,23 @@ class SLMPatternGenerator:
             )
             intensity = np.abs(far_field) ** 2
             measured_power = np.array([
-                np.sum(intensity[region]) for region in power_regions
+                np.sum(intensity[y_slice, x_slice][mask])
+                for y_slice, x_slice, mask in power_regions
             ])
+            measured_ratio = measured_power / np.maximum(
+                np.mean(measured_power), 1e-30
+            )
             correction = np.sqrt(
-                np.mean(measured_power) / np.maximum(measured_power, 1e-30)
+                desired_power / np.maximum(measured_ratio, 1e-30)
             )
             weights *= correction**0.7
             weights /= np.mean(weights)
 
             target_amplitude = sum(
-                weight * profile
-                for weight, profile in zip(weights, spot_profiles)
+                adaptive_weight * np.sqrt(power) * profile
+                for adaptive_weight, power, profile in zip(
+                    weights, desired_power, spot_profiles
+                )
             )
             target_amplitude /= np.sqrt(np.sum(target_amplitude**2))
             constrained_far_field = target_amplitude * np.exp(
@@ -1532,6 +1719,8 @@ def generate_phase():
         wavelength_nm = float(data.get('wavelength_nm', 532))
         x_pixels = int(data.get('x_pixels', 1272))
         y_pixels = int(data.get('y_pixels', 1024))
+        if not (64 <= x_pixels <= 4096 and 64 <= y_pixels <= 4096):
+            raise ValueError('图像宽高必须在 64 到 4096 像素之间')
         pitch_mode = int(data.get('pitch_mode', 1))
         rotation_degree = float(data.get('rotation_degree', 0))
         offset_x = int(data.get('offset_x', 0))
@@ -1567,7 +1756,7 @@ def generate_phase():
         # 保存到文件
         output_dir = OUTPUT_DIR
         os.makedirs(output_dir, exist_ok=True)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
         filename = f"fresnel_f{focus_mm}mm_w{wavelength_nm}nm_{timestamp}.bmp"
         filepath = os.path.join(output_dir, filename)
         SLMPatternGenerator.save_image(phase_array, filepath)
@@ -1577,7 +1766,11 @@ def generate_phase():
             config_name=f"Custom_f{focus_mm}mm_w{wavelength_nm}nm",
             focus_mm=focus_mm,
             wavelength_nm=wavelength_nm,
-            output_file=filepath
+            output_file=filepath,
+            parameters_json=json.dumps(
+                normalize_history_parameters('fresnel', data),
+                ensure_ascii=False, allow_nan=False
+            )
         )
         db.session.add(history)
         db.session.commit()
@@ -1608,10 +1801,8 @@ def generate_pattern(pattern_type):
         data = request.json or {}
         width = int(data.get('width', 1272))
         height = int(data.get('height', 1024))
-
-        # 限制最大分辨率
-        width = min(max(width, 64), 4096)
-        height = min(max(height, 64), 4096)
+        if not (64 <= width <= 4096 and 64 <= height <= 4096):
+            raise ValueError('图像宽高必须在 64 到 4096 像素之间')
 
         # 根据类型生成相位图
         target_array = None
@@ -1642,6 +1833,12 @@ def generate_pattern(pattern_type):
                 else None
             )
             phase_direction = str(data.get('phase_direction', 'standard'))
+            target_spots = data.get('target_spots')
+            if target_spots is not None:
+                target_spots = SLMPatternGenerator._normalize_target_spots(
+                    target_spots
+                )
+                spot_count = len(target_spots)
             phase_array = SLMPatternGenerator.fresnel_three_spots(
                 width=width,
                 height=height,
@@ -1654,12 +1851,14 @@ def generate_pattern(pattern_type):
                 incident_beam_diameter_mm=incident_beam_diameter_mm,
                 iterations=iterations,
                 spot_radius_mm=spot_radius_mm,
-                phase_direction=phase_direction
+                phase_direction=phase_direction,
+                target_spots=target_spots
             )
             name = (
                 f"fresnel_spots_f{focal_length:g}mm_"
                 f"w{wavelength:g}nm_n{spot_count}_d{spot_spacing:g}mm_"
                 f"{algorithm}_{phase_direction}"
+                f"{'_custom' if target_spots is not None else ''}"
             )
 
         elif pattern_type == 'three_spots':
@@ -1680,6 +1879,12 @@ def generate_pattern(pattern_type):
                 else None
             )
             phase_direction = str(data.get('phase_direction', 'standard'))
+            target_spots = data.get('target_spots')
+            if target_spots is not None:
+                target_spots = SLMPatternGenerator._normalize_target_spots(
+                    target_spots
+                )
+                spot_count = len(target_spots)
             phase_array = SLMPatternGenerator.fresnel_three_spots(
                 width=width,
                 height=height,
@@ -1693,12 +1898,14 @@ def generate_pattern(pattern_type):
                 iterations=iterations,
                 spot_radius_mm=spot_radius_mm,
                 phase_direction=phase_direction,
-                with_lens=False
+                with_lens=False,
+                target_spots=target_spots
             )
             name = (
                 f"three_spots_f{focal_length:g}mm_"
                 f"w{wavelength:g}nm_n{spot_count}_d{spot_spacing:g}mm_"
                 f"{algorithm}_{phase_direction}"
+                f"{'_custom' if target_spots is not None else ''}"
             )
 
         elif pattern_type == 'double_ring':
@@ -1840,7 +2047,11 @@ def generate_pattern(pattern_type):
                 config_name=name,
                 focus_mm=float(data.get('focal_length', 0)),
                 wavelength_nm=float(data.get('wavelength', 0)),
-                output_file=filepath
+                output_file=filepath,
+                parameters_json=json.dumps(
+                    normalize_history_parameters(pattern_type, data),
+                    ensure_ascii=False, allow_nan=False
+                )
             )
             db.session.add(history)
             db.session.commit()
@@ -1853,6 +2064,10 @@ def generate_pattern(pattern_type):
             'pattern_type': pattern_type,
             'message': f'{pattern_type} 相位图生成成功'
         }
+        if pattern_type in ('fresnel_three_spots', 'three_spots') and target_spots is not None:
+            response['target_spots'] = SLMPatternGenerator._normalize_target_spots(
+                target_spots
+            )
         if pattern_type == 'double_ring':
             response.update({
                 'target_image': target_preview,
@@ -1956,7 +2171,11 @@ def calculate_cgh_api():
             focus_mm=0,
             wavelength_nm=0,
             input_image='uploaded',
-            output_file=filepath
+            output_file=filepath,
+            parameters_json=json.dumps(
+                normalize_history_parameters('cgh', data),
+                ensure_ascii=False, allow_nan=False
+            )
         )
         db.session.add(history)
         db.session.commit()
@@ -2027,7 +2246,7 @@ def convert_image_to_bmp():
         # 保存为 BMP
         output_dir = OUTPUT_DIR
         os.makedirs(output_dir, exist_ok=True)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
         filename = f"converted_{timestamp}.bmp"
         filepath = os.path.join(output_dir, filename)
         img.save(filepath, format='BMP')
@@ -2044,7 +2263,11 @@ def convert_image_to_bmp():
             focus_mm=0,
             wavelength_nm=0,
             input_image='uploaded',
-            output_file=filepath
+            output_file=filepath,
+            parameters_json=json.dumps(
+                normalize_history_parameters('converter', data),
+                ensure_ascii=False, allow_nan=False
+            )
         )
         db.session.add(history)
         db.session.commit()
@@ -2203,7 +2426,12 @@ def get_history():
 def download_file(filename):
     """下载文件"""
     try:
-        filepath = os.path.join(OUTPUT_DIR, filename)
+        output_root = os.path.realpath(OUTPUT_DIR)
+        filepath = os.path.realpath(os.path.join(output_root, filename))
+        if os.path.commonpath([output_root, filepath]) != output_root:
+            return jsonify({'success': False, 'error': '文件不存在'}), 404
+        if not os.path.isfile(filepath):
+            return jsonify({'success': False, 'error': '文件不存在'}), 404
         return send_file(filepath, as_attachment=True)
     except Exception as e:
         return jsonify({
@@ -2258,6 +2486,14 @@ if __name__ == '__main__':
     # 创建数据库表
     with app.app_context():
         db.create_all()
+        history_columns = {
+            column['name'] for column in inspect(db.engine).get_columns('generation_history')
+        }
+        if 'parameters_json' not in history_columns:
+            print(
+                'History metadata migration required. Stop the app and run '
+                '`python migrate_history_schema.py` before using history or generation.'
+            )
         init_default_presets()
 
     # 运行应用

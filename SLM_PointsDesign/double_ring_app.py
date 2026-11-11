@@ -199,7 +199,12 @@ class DoubleRingApp:
         self.entries = {}
         self.last_arrays = {}         # 各面板最近一次生成的 numpy 数组
         self.pending_debounce = None
-        self.worker = None            # 占位: 后台线程
+        self.worker = None
+        self._preview_generation = 0
+        self._pending_preview = None
+        self._pending_saves = []
+        self._active_request_id = None
+        self._next_request_id = 0
 
         self._build_ui()
         self.schedule_preview(immediate=True)
@@ -300,6 +305,7 @@ class DoubleRingApp:
 
     # ---------- 自动预览（防抖） ----------
     def schedule_preview(self, immediate=False):
+        self._preview_generation += 1
         if self.pending_debounce is not None:
             self.root.after_cancel(self.pending_debounce)
         delay = 0 if immediate else DEBOUNCE_MS
@@ -307,57 +313,103 @@ class DoubleRingApp:
 
     def _start_preview(self):
         self.pending_debounce = None
-        if self.worker is not None and self.worker.is_alive():
-            return  # 上一轮还在算, 防抖会再次触发
+        self._pending_preview = None
         try:
             params = self.collect_params()
         except (ValueError, TypeError):
             self.status_var.set("参数格式有误，请检查输入")
             return
-        self.status_var.set(
-            f"正在计算 {params['width']}x{params['height']} "
-            f"x {params['iterations']} 次迭代...")
+        self._pending_preview = (self._preview_generation, params)
+        self._start_pending_work()
+
+    def _start_pending_work(self):
+        if self._active_request_id is not None:
+            return
+
+        save_path = None
+        if self._pending_saves:
+            params, save_path, generation = self._pending_saves.pop(0)
+        elif self._pending_preview is not None:
+            generation, params = self._pending_preview
+            self._pending_preview = None
+        else:
+            return
+
+        self._next_request_id += 1
+        request_id = self._next_request_id
+        self._active_request_id = request_id
+        if save_path:
+            self.status_var.set("正在生成并保存...")
+        else:
+            self.status_var.set(
+                f"正在计算 {params['width']}x{params['height']} "
+                f"x {params['iterations']} 次迭代...")
         self.worker = threading.Thread(
-            target=self._generate_worker, args=(params, None), daemon=True)
+            target=self._generate_worker,
+            args=(params, save_path, generation, request_id),
+            daemon=True,
+        )
         self.worker.start()
 
     # ---------- 后台生成线程 ----------
-    def _generate_worker(self, params, save_path):
+    def _generate_worker(self, params, save_path, generation, request_id):
         try:
             phase, target, reconstructed = double_ring_phase(**params)
             color_intensity = apply_colormap(fft_final_intensity(phase))
         except Exception as e:
-            self.root.after(0, self._on_error, str(e))
+            self.root.after(0, self._on_error, str(e), save_path, generation,
+                            request_id)
             return
         if save_path:
             try:
                 save_bmp(phase, save_path)
             except Exception as e:
-                self.root.after(0, self._on_error, f"保存失败: {e}")
+                self.root.after(0, self._on_error, f"保存失败: {e}",
+                                save_path, generation, request_id)
                 return
         self.root.after(0, self._on_done, params, phase, target,
-                        reconstructed, color_intensity, save_path)
+                        reconstructed, color_intensity, save_path, generation,
+                        request_id)
 
-    def _on_error(self, message):
-        self.status_var.set(f"错误: {message}")
-        messagebox.showerror("生成失败", message)
+    def _finish_work(self, request_id):
+        if request_id != self._active_request_id:
+            return False
+        self._active_request_id = None
+        self.worker = None
+        return True
+
+    def _on_error(self, message, save_path, generation, request_id):
+        if not self._finish_work(request_id):
+            return
+        if save_path or generation == self._preview_generation:
+            self.status_var.set(f"错误: {message}")
+            messagebox.showerror("生成失败", message)
+        self._start_pending_work()
 
     def _on_done(self, params, phase, target, reconstructed, color_intensity,
-                 save_path):
-        self._show_curve(target)
-        self._show_image("target", target)
-        self._show_image("phase", phase)
-        self._show_image("reconstructed", reconstructed)
-        self._show_image("fft", color_intensity)
-        self.last_arrays = {"target": target, "phase": phase,
-                            "reconstructed": reconstructed,
-                            "fft": color_intensity}
+                 save_path, generation, request_id):
+        if not self._finish_work(request_id):
+            return
+        is_current = generation == self._preview_generation
+        if is_current:
+            self._show_curve(target)
+            self._show_image("target", target)
+            self._show_image("phase", phase)
+            self._show_image("reconstructed", reconstructed)
+            self._show_image("fft", color_intensity)
+            self.last_arrays = {"target": target, "phase": phase,
+                                "reconstructed": reconstructed,
+                                "fft": color_intensity}
+            if (save_path and self._pending_preview is not None
+                    and self._pending_preview[0] == generation):
+                self._pending_preview = None
         if save_path:
             self.status_var.set(f"已保存: {save_path}")
-        else:
+        elif is_current:
             self.status_var.set(
                 f"预览完成 {params['width']}x{params['height']}，"
                 f"迭代 {params['iterations']} 次")
+        self._start_pending_work()
 
     def _show_image(self, key, array):
         if array.ndim == 3:
@@ -431,9 +483,9 @@ class DoubleRingApp:
         filepath = os.path.join(
             OUTPUT_DIR,
             f"{output_name(params)}_{timestamp}.bmp")
-        self.status_var.set("正在生成并保存...")
-        threading.Thread(target=self._generate_worker,
-                         args=(params, filepath), daemon=True).start()
+        self._pending_saves.append(
+            (params, filepath, self._preview_generation))
+        self._start_pending_work()
 
     def save_array(self, key):
         array = self.last_arrays.get(key)

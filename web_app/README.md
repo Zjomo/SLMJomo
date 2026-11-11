@@ -2,7 +2,7 @@
 
 ## 🎯 项目概述
 
-这是一个基于 **Flask + JavaScript + SQLite** 的LCOS-SLM专业控制Web应用，集成了**所有常见SLM相位图生成功能**和 **CGH Simulation（计算机生成全息图模拟）**。
+这是一个基于 **Flask + JavaScript + SQLite** 的LCOS-SLM专业控制Web应用，集成了多种SLM相位图生成和 **CGH Simulation（计算机生成全息图模拟）**。当前设备连接与发送界面为模拟状态，不会通过厂商SDK驱动真实SLM。
 
 本项目参考了 `matlab_SLM_功能模块参考代码` 中的所有MATLAB实现，完整模拟官方SLM软件UI界面，提供专业级的工作流程控制和实时预览功能。
 
@@ -23,12 +23,16 @@ pip install -r requirements.txt
 # Windows
 start.bat
 
-# Linux/Mac
-./start.sh
+# Linux/macOS
+sh start.sh
 
 # 或手动启动
 python app.py
 ```
+
+For the dependency versions tested on Windows x64 with CPython 3.12, install `requirements-win-py312-x64.lock` instead of the open-range `requirements.txt`. Linux/macOS installations use `requirements.txt`; that platform matrix has not yet been verified in a clean environment.
+
+For an existing database created before history parameter snapshots were added, stop the app and run `python migrate_history_schema.py` once before starting it again. The command creates a timestamped SQLite backup beside the database, then adds the nullable history column. New databases do not need this migration.
 
 ### 3. 访问界面
 
@@ -149,6 +153,14 @@ python app.py
 - 可调播放间隔
 - 循环播放支持
 
+### 项目工作流与参数预设
+
+- 侧栏可新建、打开或保存 `.slmproject.json` 项目文件，文件最大 32 MB
+- 项目保存工作区参数、菲涅尔输入图、二维自定义光斑阵列和播放序列，包括绘图板动画片段、CGH 目标和生成预览
+- 相同的 CGH 相位图与主预览图只在项目文件中保存一次
+- 历史记录可恢复相位图和已保存的参数快照；遗留记录仍可加载相位图，输入图像数据不会重复写入历史表
+- 菲涅尔模块的保存按钮可创建参数预设，并在侧栏列表中应用或删除
+
 ### 10. 🔌 设备连接管理
 
 - 模拟SLM设备连接
@@ -251,34 +263,32 @@ GET    /api/download/<filename>  # 下载文件
 
 ## 🧪 测试
 
-运行自动化测试脚本：
+在 `web_app` 目录运行 Python 测试和 JavaScript 回归检查：
 
 ```bash
-cd web_app
-python test_modules.py
+python -m unittest discover -s . -p "test_*.py" -v
+node --check static/js/pro_main.js
+node test_project_image_headers.cjs
+node test_project_roundtrip.cjs
+node test_history_restore.cjs
+node test_spot_array_project_validation.cjs
+node test_cgh_handoff.cjs
+node test_top_navigation.cjs
 ```
 
-测试结果：
-```
-fresnel          ✅ 通过
-axicon           ✅ 通过
-blaze            ✅ 通过
-sine             ✅ 通过
-vortex           ✅ 通过
-random           ✅ 通过
-divide           ✅ 通过
-cgh_gs           ✅ 通过
-cgh_oc           ✅ 通过
-cgh_gaussian_spots ✅ 通过
-cgh_oc_gaussian  ✅ 通过
-convert_rgb_png  ✅ 通过
-convert_rgba_png ✅ 通过
-convert_jpeg     ✅ 通过
-convert_slm_size ✅ 通过
+The history schema migration and backup tests use temporary SQLite files. They do not access the configured user database.
 
-总计: 15/15 通过
-🎉 所有模块测试通过！
+To run the isolated browser regression, install the test dependencies and Chromium once, then run the script from this directory:
+
+```bash
+python -m pip install -r requirements-test.txt
+python -m playwright install chromium
+python browser_workflow_test.py
 ```
+
+On the tested Windows x64 / CPython 3.12 target, use `requirements-win-py312-x64-test.lock` instead of `requirements-test.txt` for pinned runtime and browser-test packages.
+
+The browser test starts Flask on an ephemeral localhost port and asserts that its SQLite database and generated files resolve inside a temporary directory before creating tables or handling requests. It covers preset create/apply/delete, Fresnel generation and history restore, project save/open, and custom spot-array editing and persistence. It does not require the regular Web App server to be running.
 
 ---
 

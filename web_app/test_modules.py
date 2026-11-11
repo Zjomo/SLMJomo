@@ -4,16 +4,21 @@ SLM功能模块测试脚本
 """
 
 import json
-import os
 from PIL import Image, ImageDraw
 import io
 import base64
+import sys
 import urllib.request
 import urllib.error
+from pathlib import Path
 
-BASE_URL = "http://127.0.0.1:5000"
+from browser_test_support import isolated_app_server
 
-def test_api(endpoint, payload, description):
+BASE_URL = None
+OUTPUT_DIR = None
+VERIFIED_CONVERSION_FILENAMES = set()
+
+def test_api(endpoint, payload, description, verifier=None):
     """通用API测试函数"""
     print(f"\n{'='*60}")
     print(f"测试: {description}")
@@ -41,6 +46,9 @@ def test_api(endpoint, payload, description):
                 print(f"   文件名: {data.get('filename', 'N/A')}")
                 if 'image' in data:
                     print(f"   图像数据: {data['image'][:50]}...")
+                if verifier and not verifier(data):
+                    print("❌ 输出文件验证失败")
+                    return False
                 return True
             else:
                 print(f"❌ 失败: {data.get('error', '未知错误')}")
@@ -103,16 +111,26 @@ def create_test_image(mode='RGB', size=(256, 256), format='PNG'):
     return f"data:image/{format.lower()};base64,{base64.b64encode(buffer.getvalue()).decode()}"
 
 
-def verify_latest_converted_bmp(expected_size=None):
-    """验证最新的 converted_*.bmp 文件是否为 8-bit 灰度 BMP"""
-    output_dir = 'output_phase_patterns'
-    files = [f for f in os.listdir(output_dir) if f.startswith('converted_') and f.endswith('.bmp')]
-    if not files:
-        print("   ⚠️ 未找到转换后的 BMP 文件")
+def verify_converted_bmp(filename, expected_size=None, output_dir=None):
+    """验证本次请求返回的转换文件是指定尺寸的 8-bit 灰度 BMP。"""
+    output_dir = Path(output_dir or OUTPUT_DIR) if (output_dir or OUTPUT_DIR) else None
+    if output_dir is None or not isinstance(filename, str):
+        print("   ⚠️ 没有设置隔离输出目录")
         return False
 
-    filename = sorted(files)[-1]
-    filepath = os.path.join(output_dir, filename)
+    if not filename.startswith('converted_') or Path(filename).name != filename or not filename.endswith('.bmp'):
+        print(f"   ⚠️ 转换接口返回了无效文件名: {filename}")
+        return False
+
+    if filename in VERIFIED_CONVERSION_FILENAMES:
+        print(f"   ⚠️ 多次转换返回了重复文件名: {filename}")
+        return False
+
+    output_root = output_dir.resolve()
+    filepath = (output_root / filename).resolve()
+    if filepath.parent != output_root or not filepath.is_file():
+        print(f"   ⚠️ 转换输出文件不存在或超出隔离目录: {filename}")
+        return False
 
     try:
         with Image.open(filepath) as img:
@@ -121,13 +139,17 @@ def verify_latest_converted_bmp(expected_size=None):
             print(f"   文件验证: {filename}, format={img.format}, mode={img.mode}, size={img.size}")
             if expected_size and not size_ok:
                 print(f"   ⚠️ 尺寸不匹配，期望: {expected_size}")
-            return is_valid and size_ok
+            if is_valid and size_ok:
+                VERIFIED_CONVERSION_FILENAMES.add(filename)
+                return True
+            return False
     except Exception as e:
         print(f"   ⚠️ 验证失败: {str(e)}")
         return False
 
 
-def main():
+def run_module_checks():
+    VERIFIED_CONVERSION_FILENAMES.clear()
     print("=" * 60)
     print("SLM功能模块自动化测试")
     print("=" * 60)
@@ -370,10 +392,11 @@ def main():
             'height': 256,
             'grayscale': True
         },
-        'BMP转换器 - RGB PNG转8-bit BMP'
+        'BMP转换器 - RGB PNG转8-bit BMP',
+        verifier=lambda data: verify_converted_bmp(
+            data.get('filename'), expected_size=(256, 256)
+        )
     )
-    if results['convert_rgb_png']:
-        verify_latest_converted_bmp(expected_size=(256, 256))
 
     # 11. BMP 转换器 - RGBA PNG 转 8-bit BMP
     rgba_png = create_test_image(mode='RGBA', size=(256, 256), format='PNG')
@@ -385,9 +408,11 @@ def main():
             'height': 512,
             'grayscale': True
         },
-        'BMP转换器 - RGBA PNG转8-bit BMP'
+        'BMP转换器 - RGBA PNG转8-bit BMP',
+        verifier=lambda data: verify_converted_bmp(
+            data.get('filename'), expected_size=(512, 512)
+        )
     )
-
     # 12. BMP 转换器 - JPEG 转 8-bit BMP
     jpeg = create_test_image(mode='RGB', size=(300, 400), format='JPEG')
     results['convert_jpeg'] = test_api(
@@ -398,9 +423,11 @@ def main():
             'height': 400,
             'grayscale': True
         },
-        'BMP转换器 - JPEG转8-bit BMP'
+        'BMP转换器 - JPEG转8-bit BMP',
+        verifier=lambda data: verify_converted_bmp(
+            data.get('filename'), expected_size=(300, 400)
+        )
     )
-
     # 13. BMP 转换器 - 自定义 SLM 分辨率
     custom = create_test_image(mode='RGB', size=(512, 512), format='PNG')
     results['convert_slm_size'] = test_api(
@@ -411,10 +438,11 @@ def main():
             'height': 1024,
             'grayscale': True
         },
-        'BMP转换器 - 自定义SLM分辨率1272x1024'
+        'BMP转换器 - 自定义SLM分辨率1272x1024',
+        verifier=lambda data: verify_converted_bmp(
+            data.get('filename'), expected_size=(1272, 1024)
+        )
     )
-    if results['convert_slm_size']:
-        verify_latest_converted_bmp(expected_size=(1272, 1024))
 
     # 14. 傅里叶面模拟 - 均匀照明
     phase_img_for_fourier = create_test_image(mode='L', size=(512, 512), format='PNG')
@@ -462,6 +490,20 @@ def main():
     else:
         print(f"⚠️ 有 {total - passed} 个模块测试失败")
         return 1
+
+
+def main():
+    global BASE_URL, OUTPUT_DIR
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, 'reconfigure', None)
+        if reconfigure:
+            reconfigure(encoding='utf-8', errors='replace')
+    with isolated_app_server() as (base_url, temporary_root):
+        BASE_URL = base_url.rstrip('/')
+        OUTPUT_DIR = temporary_root / 'output'
+        print(f"隔离服务已启动: {BASE_URL}")
+        print(f"测试输出目录: {OUTPUT_DIR}")
+        return run_module_checks()
 
 
 if __name__ == '__main__':

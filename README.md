@@ -1,6 +1,6 @@
 # LCOS-SLM 智能光场调控与光束整形系统
 
-基于滨松 (Hamamatsu) LCOS-SLM X15223 系列的相位图设计、仿真与控制系统。支持网页端专业面板和独立桌面工具，用于生成菲涅尔透镜、超振荡焦线、内外圈复合光斑、CGH 全息图等相位图案，并可直接下发到 SLM 硬件。
+基于滨松 (Hamamatsu) LCOS-SLM X15223 系列的相位图设计、仿真与控制系统。支持网页端专业面板和独立桌面工具，用于生成菲涅尔透镜、超振荡焦线、内外圈复合光斑、CGH 全息图等相位图案。当前网页设备控制为模拟界面，项目尚未将图案下发流程接入厂商 SDK。
 
 ![系统主界面](assets/screenshots/fresnel_lens.jpg)
 
@@ -135,6 +135,7 @@ SLMJomo/
 ```
 
 时长约 29 分钟，涵盖从参数设置、相位生成、CGH 优化到下载下发 SLM 的完整工作流。
+当前网页版本的设备连接与发送仍是模拟界面；该历史演示不代表当前已集成真实 SDK 下发。
 
 ---
 
@@ -144,9 +145,11 @@ SLMJomo/
 
 ```bash
 cd web_app
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 python app.py
 ```
+
+For the versions tested on Windows x64 with CPython 3.12, use `python -m pip install -r requirements-win-py312-x64.lock` from `web_app` to install the pinned Web App runtime.
 
 浏览器打开 `http://127.0.0.1:5000`
 
@@ -168,7 +171,7 @@ Run.bat
 2. **设置参数**：输入焦距、波长、画布尺寸等。
 3. **生成相位图**：点击“生成相位图”。
 4. **预览与下载**：右侧查看相位预览，点击“下载图像”保存 BMP。
-5. **下发 SLM**：连接设备后点击“显示到 SLM”。
+5. **设备状态**：网页面板中的连接与发送操作仅用于模拟；真实 SLM 下发尚未接入。
 6. **序列播放**：将多个图案“添加到序列”，在“序列播放控制”中播放。
 
 ---
@@ -231,6 +234,7 @@ f_max ≈ 98,000 mm (约 98 m)
 - 前端：原生 HTML/JS + Bootstrap
 - 独立桌面版：tkinter + numpy + Pillow
 - 核心算法：Gerchberg-Saxton (GS)、FFT、角谱法
+- SDK 冒烟检查：`USB_Control_SDK/project/main.py` 仅在直接运行时加载 DLL 并打开设备；模块导入不访问硬件，设备读取失败时也会尝试关闭。可在 `USB_Control_SDK/project/` 运行 `python -m unittest test_sdk_loader test_sdk_smoke` 做无硬件测试。该脚本只读取设备序列号和温度，不会下发相位图。
 
 ---
 

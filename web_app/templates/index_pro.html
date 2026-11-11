@@ -15,19 +15,19 @@
                 <span class="version">v2.0 Professional</span>
             </div>
             <nav class="menu-items">
-                <a href="#" class="menu-item active" onclick="switchTab('home')">🏠 首页</a>
-                <a href="#" class="menu-item" onclick="switchTab('patterns')">🎨 图案库</a>
-                <a href="#" class="menu-item" onclick="switchTab('calibration')">⚙️ 校正</a>
-                <a href="#" class="menu-item" onclick="switchTab('sequence')">▶️ 序列</a>
-                <a href="#paint-board" class="menu-item" onclick="scrollToSection('paint-board'); return false;">✎ 绘图板</a>
-                <a href="#" class="menu-item" onclick="switchTab('settings')">🔧 设置</a>
+                <a href="#fresnel" class="menu-item active" onclick="switchTab(event)">🏠 首页</a>
+                <a href="#fresnel" class="menu-item" onclick="switchTab(event)">🎨 图案库</a>
+                <a href="#" class="menu-item" aria-disabled="true" title="校正视图尚未实现" data-unavailable-message="校正视图尚未实现" onclick="return switchTab(event)">⚙️ 校正</a>
+                <a href="#sequence-panel" class="menu-item" onclick="switchTab(event)">▶️ 序列</a>
+                <a href="#paint-board" class="menu-item" onclick="switchTab(event)">✎ 绘图板</a>
+                <a href="#" class="menu-item" aria-disabled="true" title="设置视图尚未实现" data-unavailable-message="设置视图尚未实现" onclick="return switchTab(event)">🔧 设置</a>
             </nav>
             <div class="status-bar">
                 <div class="device-status" id="device_status">
                     <span class="status-icon">🔌</span>
-                    <span class="status-text">未连接</span>
+                    <span class="status-text">模拟未连接</span>
                 </div>
-                <button class="btn-connect" onclick="connectDevice()">连接设备</button>
+                <button class="btn-connect" onclick="connectDevice()">模拟连接</button>
             </div>
         </header>
 
@@ -124,16 +124,16 @@
                 </div>
 
                 <div class="sidebar-section">
+                    <h3>💾 菲涅尔参数预设</h3>
+                    <ul class="recent-list preset-list" id="preset_list" aria-live="polite">
+                        <li class="preset-empty">正在加载预设...</li>
+                    </ul>
+                </div>
+
+                <div class="sidebar-section">
                     <h3>📈 最近使用</h3>
                     <ul class="recent-list" id="recent_patterns">
-                        <li onclick="loadRecentPattern('fresnel_1000mm')">
-                            <span class="pattern-name">菲涅尔透镜 1000mm</span>
-                            <span class="pattern-time">2分钟前</span>
-                        </li>
-                        <li onclick="loadRecentPattern('grating_16')">
-                            <span class="pattern-name">衍射光栅 16阶</span>
-                            <span class="pattern-time">10分钟前</span>
-                        </li>
+                        <li class="recent-empty">正在加载历史记录...</li>
                     </ul>
                 </div>
             </aside>
@@ -282,7 +282,7 @@
                                 <span class="icon">➕</span> 添加到序列
                             </button>
                             <button class="btn btn-secondary" onclick="showOnSLM()">
-                                <span class="icon">📺</span> 显示到SLM
+                                <span class="icon">📺</span> 模拟显示
                             </button>
                             <button class="btn btn-download" onclick="downloadImage()" id="download_btn" disabled>
                                 <span class="icon">💾</span> 下载图像
@@ -343,15 +343,48 @@
                                 <div class="three-spot-target" id="three_spot_target" aria-label="三个水平等间距焦点">
                                     <span></span><span></span><span></span>
                                 </div>
+                                <div class="spot-array-editor">
+                                    <div class="spot-array-editor-header">
+                                        <strong>二维独立光斑</strong>
+                                        <span>焦平面坐标 (mm)</span>
+                                    </div>
+                                    <div class="spot-array-canvas-frame">
+                                        <canvas id="three_spot_editor" width="600" height="420" aria-label="拖动各个光斑以独立调整焦平面位置"></canvas>
+                                    </div>
+                                    <div class="spot-array-status" id="three_spot_array_status" aria-live="polite"></div>
+                                    <div class="spot-array-toolbar">
+                                        <button type="button" class="btn btn-secondary" onclick="addArraySpot()">＋ 光斑</button>
+                                        <button type="button" class="btn btn-secondary" id="three_spot_remove" onclick="removeSelectedArraySpot()">删除选中</button>
+                                        <button type="button" class="btn btn-secondary" onclick="resetSpotArray()">重置等间距</button>
+                                    </div>
+                                    <div class="spot-array-details">
+                                        <label class="param-item">
+                                            <span class="param-label">选中光斑</span>
+                                            <select class="param-select" id="three_spot_selected"></select>
+                                        </label>
+                                        <label class="param-item">
+                                            <span class="param-label">X (mm)</span>
+                                            <input type="number" class="param-input" id="three_spot_x" step="0.01">
+                                        </label>
+                                        <label class="param-item">
+                                            <span class="param-label">Y (mm)</span>
+                                            <input type="number" class="param-input" id="three_spot_y" step="0.01">
+                                        </label>
+                                        <label class="param-item">
+                                            <span class="param-label">相对强度</span>
+                                            <input type="number" class="param-input" id="three_spot_weight" min="0.01" max="10" step="0.1">
+                                        </label>
+                                    </div>
+                                </div>
                                 <div class="param-item">
                                     <label>
-                                        <span class="param-label">光斑数量 n</span>
+                                        <span class="param-label">等间距光斑数量 n</span>
                                         <input type="number" class="param-input" id="three_spot_count" value="3" min="2" max="15" step="1" oninput="toggleThreeSpotOptimization()">
                                     </label>
                                 </div>
                                 <div class="param-item">
                                     <label>
-                                        <span class="param-label">相邻点间距 (mm)</span>
+                                        <span class="param-label">等间距重置的点间距 (mm)</span>
                                         <input type="number" class="param-input" id="three_spot_spacing" value="1.0" min="0.01" max="20" step="0.05">
                                     </label>
                                 </div>
@@ -438,7 +471,7 @@
                                 <span class="icon">➕</span> 添加到序列
                             </button>
                             <button class="btn btn-secondary" onclick="showCurrentOnSLM()">
-                                <span class="icon">📺</span> 显示到 SLM
+                                <span class="icon">📺</span> 模拟显示
                             </button>
                             <button class="btn btn-download" onclick="downloadCurrentImage()" id="fresnel_three_spots_download_btn" disabled>
                                 <span class="icon">💾</span> 下载图像
@@ -594,7 +627,7 @@
                                 <span class="icon">➕</span> 添加到序列
                             </button>
                             <button class="btn btn-secondary" onclick="showCurrentOnSLM()">
-                                <span class="icon">📺</span> 显示到 SLM
+                                <span class="icon">📺</span> 模拟显示
                             </button>
                             <button class="btn btn-download" onclick="downloadCurrentImage()" id="three_spots_download_btn" disabled>
                                 <span class="icon">💾</span> 下载图像
@@ -643,7 +676,7 @@
                         <div class="action-bar">
                             <button class="btn btn-primary" onclick="generateDoubleRing(true)"><span class="icon">◎</span> 生成双环相位图</button>
                             <button class="btn btn-secondary" onclick="addCurrentToSequence()"><span class="icon">＋</span> 添加到序列</button>
-                            <button class="btn btn-secondary" onclick="showCurrentOnSLM()"><span class="icon">▣</span> 显示到 SLM</button>
+                            <button class="btn btn-secondary" onclick="showCurrentOnSLM()"><span class="icon">▣</span> 模拟显示</button>
                             <button class="btn btn-download" onclick="downloadCurrentImage()" id="double_ring_download_btn" disabled><span class="icon">⇩</span> 下载 BMP</button>
                         </div>
                         <div class="double-ring-status" id="double_ring_status">就绪</div>
@@ -698,7 +731,7 @@
                                 <span class="icon">➕</span> 添加到序列
                             </button>
                             <button class="btn btn-secondary" onclick="showCurrentOnSLM()">
-                                <span class="icon">📺</span> 显示到SLM
+                                <span class="icon">📺</span> 模拟显示
                             </button>
                             <button class="btn btn-download" onclick="downloadCurrentImage()" id="axicon_download_btn" disabled>
                                 <span class="icon">💾</span> 下载图像
@@ -804,7 +837,7 @@
                                 <span class="icon">➕</span> 添加到序列
                             </button>
                             <button class="btn btn-secondary" onclick="showCurrentOnSLM()">
-                                <span class="icon">📺</span> 显示到SLM
+                                <span class="icon">📺</span> 模拟显示
                             </button>
                             <button class="btn btn-download" onclick="downloadCurrentImage()" id="cylindrical_download_btn" disabled>
                                 <span class="icon">💾</span> 下载图像
@@ -873,7 +906,7 @@
                                 <span class="icon">➕</span> 添加到序列
                             </button>
                             <button class="btn btn-secondary" onclick="showCurrentOnSLM()">
-                                <span class="icon">📺</span> 显示到SLM
+                                <span class="icon">📺</span> 模拟显示
                             </button>
                             <button class="btn btn-download" onclick="downloadCurrentImage()" id="blaze_download_btn" disabled>
                                 <span class="icon">💾</span> 下载图像
@@ -938,7 +971,7 @@
                                 <span class="icon">➕</span> 添加到序列
                             </button>
                             <button class="btn btn-secondary" onclick="showCurrentOnSLM()">
-                                <span class="icon">📺</span> 显示到SLM
+                                <span class="icon">📺</span> 模拟显示
                             </button>
                             <button class="btn btn-download" onclick="downloadCurrentImage()" id="sine_download_btn" disabled>
                                 <span class="icon">💾</span> 下载图像
@@ -996,7 +1029,7 @@
                                 <span class="icon">➕</span> 添加到序列
                             </button>
                             <button class="btn btn-secondary" onclick="showCurrentOnSLM()">
-                                <span class="icon">📺</span> 显示到SLM
+                                <span class="icon">📺</span> 模拟显示
                             </button>
                             <button class="btn btn-download" onclick="downloadCurrentImage()" id="vortex_download_btn" disabled>
                                 <span class="icon">💾</span> 下载图像
@@ -1054,7 +1087,7 @@
                                 <span class="icon">➕</span> 添加到序列
                             </button>
                             <button class="btn btn-secondary" onclick="showCurrentOnSLM()">
-                                <span class="icon">📺</span> 显示到SLM
+                                <span class="icon">📺</span> 模拟显示
                             </button>
                             <button class="btn btn-download" onclick="downloadCurrentImage()" id="random_download_btn" disabled>
                                 <span class="icon">💾</span> 下载图像
@@ -1119,7 +1152,7 @@
                                 <span class="icon">➕</span> 添加到序列
                             </button>
                             <button class="btn btn-secondary" onclick="showCurrentOnSLM()">
-                                <span class="icon">📺</span> 显示到SLM
+                                <span class="icon">📺</span> 模拟显示
                             </button>
                             <button class="btn btn-download" onclick="downloadCurrentImage()" id="divide_download_btn" disabled>
                                 <span class="icon">💾</span> 下载图像
@@ -1219,7 +1252,7 @@
                                 <span class="icon">➕</span> 添加到序列
                             </button>
                             <button class="btn btn-secondary" onclick="showCurrentOnSLM()">
-                                <span class="icon">📺</span> 显示到SLM
+                                <span class="icon">📺</span> 模拟显示
                             </button>
                             <button class="btn btn-download" onclick="downloadCurrentImage()" id="cross_download_btn" disabled>
                                 <span class="icon">💾</span> 下载图像
@@ -1401,7 +1434,7 @@
                                             <span class="icon">💾</span> 下载CGH
                                         </button>
                                         <button class="btn btn-primary" onclick="sendCGHToSLM()" id="cgh_send_btn" disabled>
-                                            <span class="icon">📺</span> 发送到SLM
+                                            <span class="icon">📺</span> 模拟发送
                                         </button>
                                     </div>
                                 </div>
@@ -1873,7 +1906,9 @@
     </div>
 
     <!-- JavaScript -->
+    <script src="{{ url_for('static', filename='js/project_image_utils.js') }}"></script>
     <script src="{{ url_for('static', filename='js/pro_main.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/spot_array.js') }}"></script>
     <script src="{{ url_for('static', filename='js/paint_board.js') }}"></script>
 </body>
 </html>
