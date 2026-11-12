@@ -330,8 +330,13 @@ body {
     border: 1px solid var(--border-color);
 }
 
-.module-card.collapsed .module-content {
+/* 单窗口模式：工作区同一时刻只显示一个模块，通过快速导航/顶部菜单切换 */
+.workspace > .module-card {
     display: none;
+}
+
+.workspace > .module-card.module-active {
+    display: block;
 }
 
 .module-header {
@@ -341,7 +346,6 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    cursor: pointer;
 }
 
 .module-header h2 {
@@ -368,15 +372,6 @@ body {
     background: var(--primary-color);
     color: white;
     border-color: var(--primary-color);
-}
-
-.toggle-icon {
-    font-size: 1em;
-    transition: transform 0.3s;
-}
-
-.module-card.collapsed .toggle-icon {
-    transform: rotate(-90deg);
 }
 
 .module-content {
@@ -917,6 +912,191 @@ body {
     gap: 10px;
     margin-top: 15px;
 }
+
+/* ==================== CGH 视频序列播放 ==================== */
+.cgh-video-panel {
+    margin-top: 25px;
+    padding: 20px;
+    background: #f8f9fa;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+
+.cgh-video-panel h3 {
+    margin-bottom: 8px;
+    color: var(--primary-color);
+}
+
+.cgh-video-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.cgh-video-status {
+    background: #eef3ff;
+    border: 1px solid #c6d4f5;
+    border-radius: 4px;
+    padding: 8px 12px;
+    margin-bottom: 12px;
+    font-size: 0.85em;
+    color: var(--text-secondary);
+}
+
+.cgh-video-frames {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    background: white;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    min-height: 90px;
+    padding: 10px;
+    margin-bottom: 15px;
+}
+
+.cgh-video-empty {
+    text-align: center;
+    color: var(--text-secondary);
+    padding: 25px;
+    width: 100%;
+}
+
+.cgh-video-frame {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 6px;
+    background: white;
+    border: 2px solid var(--border-color);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: border-color 0.2s;
+}
+
+.cgh-video-frame:hover {
+    border-color: var(--primary-color);
+}
+
+.cgh-video-frame.active {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.35);
+}
+
+.cgh-video-frame .frame-index {
+    font-size: 0.75em;
+    color: var(--text-secondary);
+}
+
+.cgh-video-frame img {
+    width: 64px;
+    height: 64px;
+    object-fit: contain;
+    background: #000;
+    image-rendering: pixelated;
+}
+
+.cgh-video-frame .frame-actions {
+    display: flex;
+    gap: 4px;
+}
+
+.cgh-video-frame .frame-actions button {
+    border: none;
+    background: #eef1f6;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 0.75em;
+    cursor: pointer;
+}
+
+.cgh-video-frame .frame-actions button:hover {
+    background: var(--primary-color);
+    color: white;
+}
+
+.cgh-video-frame .frame-actions button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.cgh-video-frame .frame-state {
+    font-size: 0.7em;
+    color: #b58900;
+}
+
+.cgh-video-frame .frame-state.done {
+    color: var(--success-color, #28a745);
+}
+
+.cgh-video-player {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 280px;
+    gap: 15px;
+    align-items: start;
+}
+
+.cgh-video-screen {
+    background: #000;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    min-height: 220px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}
+
+.cgh-video-screen canvas {
+    max-width: 100%;
+    max-height: 320px;
+    image-rendering: pixelated;
+}
+
+.cgh-video-controls {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    align-content: start;
+}
+
+.cgh-video-controls label {
+    grid-column: span 3;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85em;
+    padding: 6px 8px;
+    background: white;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+}
+
+.cgh-video-controls label input[type="number"] {
+    width: 90px;
+}
+
+.cgh-video-progress {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 0.85em;
+    color: var(--text-secondary);
+}
+
+.cgh-video-progress input[type="range"] {
+    flex: 1;
+}
+
+@media (max-width: 1100px) {
+    .cgh-video-player {
+        grid-template-columns: 1fr;
+    }
+}
+
 
 .sequence-item {
     display: flex;
@@ -1555,4 +1735,95 @@ body {
         flex: 1 1 44%;
         justify-content: center;
     }
+}
+
+/* ==================== USB_SLMControl 模块 ==================== */
+.usbslm-btn-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+.usbslm-status-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    margin-top: 8px;
+    padding: 10px;
+    background: #f7f9fb;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+}
+
+.usbslm-status-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+    color: var(--text-secondary);
+    gap: 8px;
+}
+
+.usbslm-status-item b {
+    color: var(--text-primary);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.usbslm-preview-row {
+    display: flex;
+    gap: 12px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+}
+
+.usbslm-preview-row figure {
+    margin: 0;
+    text-align: center;
+}
+
+.usbslm-preview-row figcaption {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+}
+
+.usbslm-preview-row img {
+    width: 190px;
+    height: 153px;
+    object-fit: contain;
+    background: #000;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    image-rendering: pixelated;
+}
+
+.usbslm-csv {
+    width: 100%;
+    font-family: Consolas, 'Courier New', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    padding: 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: #fbfcfd;
+    color: var(--text-primary);
+    resize: vertical;
+    white-space: pre;
+}
+
+.usbslm-csv:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.15);
+}
+
+.usbslm-loop-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--text-primary);
+    cursor: pointer;
 }

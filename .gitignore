@@ -3,3 +3,4 @@
 /IntroduceVideo
 fresnel_config.db
 *.pyc
+web_app/_build/

@@ -409,6 +409,83 @@ POST /api/convert-to-bmp
 
 ---
 
+---
+
+## 🆕 2026-11-11 需求：快速导航单窗口化（v2.1）
+
+### 需求内容
+
+删除"快速导航"中每个模块窗口的"折叠"功能；每个模块改为独立窗口实现，点击导航直接切换到对应模块，不再通过页面下滑访问。
+
+### 实现方案
+
+| 项 | 变更 | 状态 |
+|---|---|:---:|
+| 折叠按钮 | 删除全部 15 个 `toggleModule` 折叠/展开按钮 | ✅ |
+| 折叠逻辑 | 删除 `toggleModule()`、`scrollToSection()` 及 `.collapsed`/`.toggle-icon` CSS | ✅ |
+| 单窗口切换 | 新增 `showModule(moduleId)`：工作区互斥显示单一模块 + 导航高亮 + 滚动复位 | ✅ |
+| 导航入口 | 快速导航 16 项与顶部菜单（首页/图案库/序列/绘图板）均切换独立窗口 | ✅ |
+| 默认窗口 | fresnel 初始携带 `module-active` | ✅ |
+
+### 测试验证
+
+| 测试 | 结果 |
+|---|:---:|
+| `node --check static/js/pro_main.js` | ✅ |
+| `node test_top_navigation.cjs`（含单窗口互斥断言） | ✅ 6 项 |
+| `python -B -m unittest test_app_routes test_fresnel_spot_array test_fresnel_three_spots` | ✅ 29 项 |
+| `python -B browser_workflow_test.py`（新增无折叠按钮 + 单窗口切换断言） | ✅ 13 项检查 |
+| `python -B ui_demo_v2.py` P0 录制 | ✅ |
+| 实机浏览器验证（导航切换/单窗口/无折叠） | ✅ |
+
+详见 [UI_CLICK_TEST_REPORT.md](UI_CLICK_TEST_REPORT.md)「2026-11-11 单窗口导航改造（v2.1）」。
+
+---
+
+## 🆕 2026-11-11 需求：CGH Simulation 多相位图序列视频播放（v3.5）
+
+### 需求内容
+
+针对 "CGH Simulation" 模块补充一个功能：用于实现多个"相位图"序列，实现"视频播放"的效果。即把多张目标图像批量计算为 CGH 相位图序列，并按帧连续播放，形成动态全息视频。
+
+### 功能设计
+
+| 子功能 | 说明 |
+|---|---|
+| 帧收集 | ① 多选上传目标图像逐帧入列；② "加入当前 CGH" 将现有计算结果追加为一帧 |
+| 帧管理 | 缩略图列表：序号、缩略图、上移/下移、删除、清空、点击跳帧 |
+| 批量计算 | 按当前 CGH 参数（算法/光斑/迭代/分辨率）逐帧调用 `/api/cgh/calculate`，带进度提示 |
+| 视频播放 | 播放/暂停/停止、帧间隔 100~10000 ms、循环开关、进度滑块跳帧、帧指示 n/N |
+| 显示模式 | 播放器可切换显示"相位图 / 再建图"，播放时同步主预览（相位模式） |
+| 序列导出 | 新增 `/api/cgh/sequence/export`：多帧相位图打包为 ZIP（8-bit BMP 序列，适配 SLM 软件连续播放） |
+| 项目持久化 | `.slmproject.json` 保存/恢复 `cgh_video.frames`（≤200 帧，沿用图像预算校验） |
+
+### 实现方案
+
+| 项 | 变更 | 文件 | 状态 |
+|---|---|---|:---:|
+| 导出接口 | POST `/api/cgh/sequence/export`，帧 base64 → 8-bit BMP → 内存 ZIP 下载（≤200 帧） | `app.py` | ✅ |
+| 帧状态 | `AppState.cghVideo = {frames, index, timer, playing, calculating}` | `pro_main.js` | ✅ |
+| 播放器 UI | CGH 模块内新增视频序列面板（工具栏 + 缩略图网格 + 播放控制） | `index_pro.html` | ✅ |
+| 样式 | `.cgh-video-*` 系列样式 | `pro_style.css` | ✅ |
+| 项目持久化 | `serializeProjectCGHVideo()` / `restoreProjectCGHVideo()` | `pro_main.js` | ✅ |
+| 后端测试 | ZIP 导出正常/异常/边界（空帧、超帧数、坏图像、坏载荷） | `test_cgh_sequence.py` | ✅ |
+| 前端测试 | vm 模拟：帧管理/播放控制/序列化/恢复校验 | `test_cgh_video.cjs` | ✅ |
+
+### 测试计划
+
+| 测试项 | 内容 | 期望结果 |
+|---|---|:---:|
+| ZIP 导出正常 | 3 帧 base64 PNG | ZIP 含 3 个按序命名的 8-bit BMP（PIL 验证 mode=L） |
+| ZIP 导出边界 | 1 帧 / 200 帧 | 成功；帧名顺序正确 |
+| ZIP 导出异常 | 空帧列表 / 201 帧 / 无效图像 / 非数组载荷 / 超大图像 | 400 + 明确错误信息 |
+| 帧管理 | 加入当前 CGH（空/非空）、删除、上移下移、清空 | 状态与列表渲染正确 |
+| 播放控制 | 空序列播放 → 提示；非空 → 播放/暂停/停止/跳帧 | timer 正确启停、按钮状态正确 |
+| 项目往返 | 序列化 → 恢复（含无效格式拒绝） | 帧数据无损还原 |
+| 回归 | `node --check` + 既有 Python/JS 测试 | 全部通过 |
+
+---
+
 **计划制定时间**: 2026-07-28
-**计划版本**: v2.0
+**计划版本**: v3.5（2026-11-11 CGH 视频序列播放）
 **负责人**: AI Assistant

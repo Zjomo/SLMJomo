@@ -203,15 +203,20 @@ class FresnelSpotArrayTests(unittest.TestCase):
                 {'x_mm': edge_position, 'y_mm': 0}
             ])
 
-    def test_custom_positions_require_gaussian_wgs(self):
-        with self.assertRaisesRegex(ValueError, 'gaussian_wgs'):
-            SLMPatternGenerator.fresnel_three_spots(
-                target_spots=[
-                    {'x_mm': -1, 'y_mm': 0},
-                    {'x_mm': 1, 'y_mm': 0}
-                ],
-                algorithm='uniform_grating'
-            )
+    def test_uniform_grating_accepts_custom_two_dimensional_positions(self):
+        phase = SLMPatternGenerator.fresnel_three_spots(
+            width=64,
+            height=64,
+            focal_length=self.FOCAL_LENGTH_MM,
+            wavelength=self.WAVELENGTH_NM,
+            pixel_size_um=self.PIXEL_SIZE_UM,
+            target_spots=[
+                {'x_mm': -1, 'y_mm': -0.5},
+                {'x_mm': 1, 'y_mm': 0.5}
+            ],
+            algorithm='uniform_grating'
+        )
+        self.assertEqual(phase.shape, (64, 64))
 
     def test_custom_wgs_rejects_excessive_computation(self):
         spots = [

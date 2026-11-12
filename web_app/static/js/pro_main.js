@@ -22,6 +22,13 @@ const AppState = {
         regeneratedImage: null,
         lightShapeImage: null,
         filename: null
+    },
+    cghVideo: {
+        frames: [],
+        index: 0,
+        timer: null,
+        playing: false,
+        calculating: false
     }
 };
 
@@ -40,6 +47,7 @@ function initializeApp() {
     loadPresets();
     initializeCGHUpload();
     initializeCGHShapeHint();
+    initializeCGHVideoUpload();
     initializeConverterUpload();
     toggleThreeSpotOptimization();
     initializeThreeSpotDammannInfo();
@@ -1031,13 +1039,6 @@ function endGeneration() {
     showLoading(false);
 }
 
-function toggleModule(moduleId) {
-    const module = document.getElementById(moduleId);
-    if (module) {
-        module.classList.toggle('collapsed');
-    }
-}
-
 function resetModule(moduleId) {
     switch (moduleId) {
         case 'double-ring':
@@ -1543,8 +1544,535 @@ async function loadCGHFromMain() {
 }
 
 function returnToMain() {
-    scrollToSection('fresnel');
+    showModule('fresnel');
     showNotification('已返回主程序', 'info');
+}
+
+// ==================== CGH 视频序列播放 ====================
+const CGH_VIDEO_MAX_FRAMES = 200;
+
+function initializeCGHVideoUpload() {
+    const input = document.getElementById('cgh_video_input');
+    if (input) {
+        input.addEventListener('change', function(e) {
+            handleCGHVideoFiles(e.target.files);
+            input.value = '';
+        });
+    }
+    const slider = document.getElementById('cgh_video_slider');
+    if (slider) {
+        slider.addEventListener('input', function() {
+            if (AppState.cghVideo.playing) pauseCGHVideo();
+            showCGHVideoFrame(parseInt(this.value, 10) || 0);
+        });
+    }
+    const modeSelect = document.getElementById('cgh_video_display_mode');
+    if (modeSelect) {
+        modeSelect.addEventListener('change', () => showCGHVideoFrame(AppState.cghVideo.index));
+    }
+}
+
+function handleCGHVideoFiles(fileList) {
+    const files = Array.from(fileList || []).filter(file => file.type.startsWith('image/'));
+    if (!files.length) {
+        showNotification('请选择图像文件', 'warning');
+        return;
+    }
+    const remaining = CGH_VIDEO_MAX_FRAMES - AppState.cghVideo.frames.length;
+    if (remaining <= 0) {
+        showNotification(`视频序列最多支持 ${CGH_VIDEO_MAX_FRAMES} 帧`, 'warning');
+        return;
+    }
+    const accepted = files.slice(0, remaining);
+    if (accepted.length < files.length) {
+        showNotification(`超出帧数上限，仅导入前 ${accepted.length} 张图像`, 'warning');
+    }
+
+    let pending = accepted.length;
+    const finishOne = () => {
+        pending--;
+        if (pending === 0) {
+            stopCGHVideo();
+            renderCGHVideoFrames();
+        }
+    };
+    accepted.forEach(file => {
+        const reader = new FileReader();
+        reader.onload = () => {
+            AppState.cghVideo.frames.push({
+                id: Date.now() + Math.random(),
+                target: reader.result,
+                phase: null,
+                regenerated: null,
+                filename: '',
+                label: file.name
+            });
+            finishOne();
+        };
+        reader.onerror = finishOne;
+        reader.readAsDataURL(file);
+    });
+}
+
+function addCurrentCGHToVideo() {
+    const cghData = AppState.cghData;
+    if (!cghData || !cghData.cghImage) {
+        showNotification('请先在 CGH 模块计算相位图', 'warning');
+        return;
+    }
+    if (AppState.cghVideo.frames.length >= CGH_VIDEO_MAX_FRAMES) {
+        showNotification(`视频序列最多支持 ${CGH_VIDEO_MAX_FRAMES} 帧`, 'warning');
+        return;
+    }
+    AppState.cghVideo.frames.push({
+        id: Date.now() + Math.random(),
+        target: cghData.targetImage || null,
+        phase: cghData.cghImage,
+        regenerated: cghData.regeneratedImage || null,
+        filename: cghData.filename || '',
+        label: cghData.filename ? `当前CGH: ${cghData.filename}` : '当前CGH'
+    });
+    renderCGHVideoFrames();
+    showNotification('已加入当前 CGH 帧序列', 'success');
+}
+
+function imageBlobToObjectUrl(blob) {
+    if (!window.URL?.createObjectURL) throw new Error('浏览器不支持本地相位帧预览');
+    return window.URL.createObjectURL(blob);
+}
+
+async function appendSLAMJobToCGH(jobId) {
+    const statusResponse = await fetch(`/api/slam/motion/jobs/${encodeURIComponent(jobId)}`);
+    const status = await statusResponse.json();
+    if (!statusResponse.ok || status.status !== 'complete' || !Array.isArray(status.frames)) {
+        throw new Error(status.error || 'SLAM 任务尚未完整生成');
+    }
+    if (status.frames.length !== Number(status.frame_count)) {
+        throw new Error('SLAM 任务帧列表不完整');
+    }
+    if (AppState.cghVideo.frames.length + status.frames.length > CGH_VIDEO_MAX_FRAMES) {
+        throw new Error(`CGH 视频序列最多支持 ${CGH_VIDEO_MAX_FRAMES} 帧，当前剩余容量不足`);
+    }
+
+    const imported = [];
+    try {
+        for (const [index, frame] of status.frames.entries()) {
+            const [phaseResponse, reconstructionResponse] = await Promise.all([
+                fetch(frame.phase_url),
+                fetch(frame.reconstruction_url)
+            ]);
+            if (!phaseResponse.ok || !reconstructionResponse.ok) {
+                throw new Error(`读取 SLAM 第 ${index + 1} 帧失败`);
+            }
+            const [phaseBlob, reconstructionBlob] = await Promise.all([
+                phaseResponse.blob(),
+                reconstructionResponse.blob()
+            ]);
+              let phaseUrl = null;
+              let reconstructionUrl = null;
+              try {
+                  phaseUrl = imageBlobToObjectUrl(phaseBlob);
+                  reconstructionUrl = imageBlobToObjectUrl(reconstructionBlob);
+              } catch (error) {
+                  if (phaseUrl && phaseUrl.startsWith('blob:')) {
+                      URL.revokeObjectURL(phaseUrl);
+                  }
+                  throw error;
+              }
+            imported.push({
+                id: Date.now() + Math.random() + index,
+                target: null,
+                  phase: phaseUrl,
+                  regenerated: reconstructionUrl,
+                filename: frame.phase_file || `slam_${jobId}_${index + 1}.bmp`,
+                label: `SLAM ${index + 1}/${status.frames.length} · t=${Number(frame.time_s).toFixed(3)} s`,
+                duration_ms: frame.duration_ms,
+                time_s: frame.time_s,
+                spots: frame.spots,
+                source: 'slam',
+                source_job_id: jobId
+            });
+        }
+    } catch (error) {
+        imported.forEach(frame => [frame.phase, frame.regenerated].forEach(url => URL.revokeObjectURL(url)));
+        throw error;
+    }
+
+    AppState.cghVideo.frames.push(...imported);
+    const displayMode = document.getElementById('cgh_video_display_mode');
+    if (displayMode) displayMode.value = 'regenerated';
+    stopCGHVideo();
+    renderCGHVideoFrames();
+    showCGHVideoFrame(AppState.cghVideo.frames.length - imported.length);
+    return imported.length;
+}
+
+function removeCGHVideoFrame(id) {
+    const wasActive = AppState.cghVideo.playing || AppState.cghVideo.index > 0;
+    const removed = AppState.cghVideo.frames.find(frame => frame.id === id);
+    if (removed?.source === 'slam') {
+        [removed.phase, removed.regenerated].forEach(url => {
+            if (url && url.startsWith('blob:')) URL.revokeObjectURL(url);
+        });
+    }
+    AppState.cghVideo.frames = AppState.cghVideo.frames.filter(frame => frame.id !== id);
+    if (wasActive) stopCGHVideo();
+    renderCGHVideoFrames();
+}
+
+function moveCGHVideoFrame(id, direction) {
+    const frames = AppState.cghVideo.frames;
+    const index = frames.findIndex(frame => frame.id === id);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= frames.length) return;
+    [frames[index], frames[target]] = [frames[target], frames[index]];
+    renderCGHVideoFrames();
+}
+
+function clearCGHVideoFrames() {
+    if (!AppState.cghVideo.frames.length) return;
+    stopCGHVideo();
+    AppState.cghVideo.frames.filter(frame => frame.source === 'slam').forEach(frame => {
+        [frame.phase, frame.regenerated].forEach(url => {
+            if (url && url.startsWith('blob:')) URL.revokeObjectURL(url);
+        });
+    });
+    AppState.cghVideo.frames = [];
+    AppState.cghVideo.index = 0;
+    renderCGHVideoFrames();
+    showNotification('已清空视频序列', 'info');
+}
+
+function renderCGHVideoFrames() {
+    const listEl = document.getElementById('cgh_video_frames');
+    if (listEl) {
+        listEl.replaceChildren();
+
+        if (!AppState.cghVideo.frames.length) {
+            const empty = document.createElement('div');
+            empty.className = 'cgh-video-empty';
+            empty.textContent = '暂无帧，请导入目标图或加入当前 CGH';
+            listEl.append(empty);
+        }
+
+        AppState.cghVideo.frames.forEach((frame, index) => {
+            const card = document.createElement('div');
+            card.className = 'cgh-video-frame' + (index === AppState.cghVideo.index ? ' active' : '');
+            card.title = frame.label || `第 ${index + 1} 帧`;
+
+            const order = document.createElement('span');
+            order.className = 'frame-index';
+            order.textContent = `#${index + 1}`;
+
+            const thumb = document.createElement('img');
+            thumb.alt = `第 ${index + 1} 帧`;
+            thumb.src = frame.phase || frame.target || '';
+
+            const state = document.createElement('span');
+            state.className = 'frame-state' + (frame.phase ? ' done' : '');
+            state.textContent = frame.phase ? '已计算' : '待计算';
+
+            const actions = document.createElement('div');
+            actions.className = 'frame-actions';
+            const upBtn = document.createElement('button');
+            upBtn.type = 'button';
+            upBtn.textContent = '↑';
+            upBtn.title = '上移';
+            upBtn.disabled = index === 0;
+            upBtn.addEventListener('click', e => {
+                e.stopPropagation();
+                moveCGHVideoFrame(frame.id, -1);
+            });
+            const downBtn = document.createElement('button');
+            downBtn.type = 'button';
+            downBtn.textContent = '↓';
+            downBtn.title = '下移';
+            downBtn.disabled = index === AppState.cghVideo.frames.length - 1;
+            downBtn.addEventListener('click', e => {
+                e.stopPropagation();
+                moveCGHVideoFrame(frame.id, 1);
+            });
+            const removeBtn = document.createElement('button');
+            removeBtn.type = 'button';
+            removeBtn.textContent = '✖';
+            removeBtn.title = '移除该帧';
+            removeBtn.addEventListener('click', e => {
+                e.stopPropagation();
+                removeCGHVideoFrame(frame.id);
+            });
+            actions.append(upBtn, downBtn, removeBtn);
+
+            card.addEventListener('click', () => {
+                stopCGHVideo();
+                showCGHVideoFrame(index);
+            });
+
+            card.append(order, thumb, state, actions);
+            listEl.append(card);
+        });
+    }
+    updateCGHVideoControls();
+}
+
+function updateCGHVideoControls() {
+    const frames = AppState.cghVideo.frames;
+    const slider = document.getElementById('cgh_video_slider');
+    if (slider) {
+        slider.max = String(Math.max(0, frames.length - 1));
+        slider.value = String(Math.min(AppState.cghVideo.index, Math.max(0, frames.length - 1)));
+        slider.disabled = frames.length === 0;
+    }
+    const indicator = document.getElementById('cgh_video_frame_indicator');
+    if (indicator) {
+        indicator.textContent = frames.length
+            ? `帧 ${Math.min(AppState.cghVideo.index + 1, frames.length)}/${frames.length}`
+            : '帧 0/0';
+    }
+    const exportBtn = document.getElementById('cgh_video_export_btn');
+    if (exportBtn) exportBtn.disabled = !frames.some(frame => frame.phase);
+    const calcBtn = document.getElementById('cgh_video_calc_btn');
+    if (calcBtn) calcBtn.disabled = AppState.cghVideo.calculating || frames.length === 0;
+}
+
+function drawCGHVideoCanvas(canvas, imageSrc) {
+    const img = new Image();
+    img.onload = function() {
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        canvas.getContext('2d').drawImage(img, 0, 0);
+    };
+    img.src = imageSrc;
+}
+
+function showCGHVideoFrame(index) {
+    const frames = AppState.cghVideo.frames;
+    if (!frames.length) return;
+    AppState.cghVideo.index = Math.max(0, Math.min(index, frames.length - 1));
+    const frame = frames[AppState.cghVideo.index];
+    const modeSelect = document.getElementById('cgh_video_display_mode');
+    const mode = modeSelect ? modeSelect.value : 'phase';
+    const image = mode === 'regenerated' && frame.regenerated ? frame.regenerated : frame.phase;
+
+    const canvas = document.getElementById('cgh_video_canvas');
+    const placeholder = document.getElementById('cgh_video_placeholder');
+    if (canvas && placeholder) {
+        if (image) {
+            drawCGHVideoCanvas(canvas, image);
+            canvas.style.display = 'block';
+            placeholder.style.display = 'none';
+        } else {
+            canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+            canvas.style.display = 'none';
+            placeholder.style.display = 'block';
+        }
+    }
+
+    if (frame.phase && mode === 'phase') {
+        displayPhaseImage(frame.phase);
+    }
+
+    updateCGHVideoControls();
+}
+
+function playCGHVideo() {
+    const frames = AppState.cghVideo.frames;
+    if (!frames.length) {
+        showNotification('视频序列为空，请先添加帧', 'warning');
+        return;
+    }
+    if (!frames.some(frame => frame.phase)) {
+        showNotification('请先点击"批量计算序列"生成相位图', 'warning');
+        return;
+    }
+    if (AppState.cghVideo.timer) return;
+
+    AppState.cghVideo.playing = true;
+    const interval = Math.max(50,
+        parseInt(document.getElementById('cgh_video_interval')?.value, 10) || 200);
+    const loop = document.getElementById('cgh_video_loop')?.checked ?? true;
+    if (AppState.cghVideo.index >= frames.length) AppState.cghVideo.index = 0;
+
+    const advanceCGHVideo = () => {
+        if (AppState.cghVideo.index >= frames.length) {
+            if (loop) {
+                AppState.cghVideo.index = 0;
+            } else {
+                stopCGHVideo();
+                return;
+            }
+        }
+        let guard = 0;
+        while (guard < frames.length && !frames[AppState.cghVideo.index].phase) {
+            AppState.cghVideo.index = (AppState.cghVideo.index + 1) % frames.length;
+            guard++;
+        }
+        if (guard >= frames.length) {
+            stopCGHVideo();
+            return;
+        }
+        const displayedFrame = frames[AppState.cghVideo.index];
+        showCGHVideoFrame(AppState.cghVideo.index);
+        AppState.cghVideo.index++;
+        const duration = Number(displayedFrame.duration_ms);
+        const delay = Number.isFinite(duration) && duration > 0
+            ? Math.max(20, Math.min(60000, duration))
+            : interval;
+        AppState.cghVideo.timer = setTimeout(advanceCGHVideo, delay);
+    };
+
+    advanceCGHVideo();
+
+    document.getElementById('cgh_video_play_btn').disabled = true;
+    document.getElementById('cgh_video_pause_btn').disabled = false;
+    showNotification('CGH 视频播放已开始', 'info');
+}
+
+function pauseCGHVideo() {
+    if (AppState.cghVideo.timer) {
+        clearTimeout(AppState.cghVideo.timer);
+        AppState.cghVideo.timer = null;
+        AppState.cghVideo.playing = false;
+
+        document.getElementById('cgh_video_play_btn').disabled = false;
+        document.getElementById('cgh_video_pause_btn').disabled = true;
+
+        showNotification('CGH 视频播放已暂停', 'info');
+    }
+}
+
+function stopCGHVideo() {
+    if (AppState.cghVideo.timer) {
+        clearTimeout(AppState.cghVideo.timer);
+        AppState.cghVideo.timer = null;
+    }
+    const wasPlaying = AppState.cghVideo.playing;
+    AppState.cghVideo.playing = false;
+    AppState.cghVideo.index = 0;
+    const playBtn = document.getElementById('cgh_video_play_btn');
+    const pauseBtn = document.getElementById('cgh_video_pause_btn');
+    if (playBtn) playBtn.disabled = false;
+    if (pauseBtn) pauseBtn.disabled = true;
+    if (wasPlaying) showNotification('CGH 视频播放已停止', 'info');
+    updateCGHVideoControls();
+}
+
+async function calculateCGHVideoSequence() {
+    const frames = AppState.cghVideo.frames;
+    if (!frames.length) {
+        showNotification('视频序列为空，请先添加帧', 'warning');
+        return;
+    }
+    if (AppState.cghVideo.calculating) return;
+
+    const pendingCount = frames.filter(frame => !frame.phase).length;
+    if (pendingCount === 0) {
+        showNotification('所有帧均已计算完成', 'info');
+        return;
+    }
+    if (!window.confirm(`将按当前 CGH 参数计算 ${pendingCount} 帧（迭代次数较多时耗时较长），是否继续？`)) {
+        return;
+    }
+
+    AppState.cghVideo.calculating = true;
+    stopCGHVideo();
+
+    const statusEl = document.getElementById('cgh_video_status');
+    const payloadParams = {
+        algorithm: document.getElementById('cgh_algorithm').value,
+        light_shape: document.getElementById('cgh_light_shape').value,
+        light_size: parseFloat(document.getElementById('cgh_light_size').value),
+        iterations: parseInt(document.getElementById('cgh_repetition').value),
+        width: parseInt(document.getElementById('cgh_width').value),
+        height: parseInt(document.getElementById('cgh_height').value),
+        gaussian_spots: parseInt(document.getElementById('cgh_gaussian_spots').value) === 1,
+        spot_radius: parseFloat(document.getElementById('cgh_spot_radius').value)
+    };
+
+    let successCount = 0;
+    let failureCount = 0;
+    try {
+        for (const [index, frame] of frames.entries()) {
+            if (frame.phase) continue;
+            if (statusEl) {
+                statusEl.textContent = `批量计算中：第 ${index + 1}/${frames.length} 帧...`;
+            }
+            if (!frame.target) {
+                failureCount++;
+                continue;
+            }
+            try {
+                const response = await fetch('/api/cgh/calculate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        target_image: frame.target,
+                        ...payloadParams
+                    })
+                });
+                const data = await response.json();
+                if (!response.ok || !data.success) {
+                    throw new Error(data.error || `HTTP ${response.status}`);
+                }
+                frame.phase = data.cgh_image;
+                frame.regenerated = data.regenerated_image;
+                frame.filename = data.filename;
+                successCount++;
+            } catch (error) {
+                failureCount++;
+                console.error(`第 ${index + 1} 帧CGH计算失败:`, error);
+                if (statusEl) statusEl.textContent = `第 ${index + 1} 帧计算失败: ${error.message}`;
+            }
+            renderCGHVideoFrames();
+        }
+    } finally {
+        AppState.cghVideo.calculating = false;
+        renderCGHVideoFrames();
+        if (statusEl) {
+            statusEl.textContent = failureCount
+                ? `批量计算完成：成功 ${successCount} 帧，失败 ${failureCount} 帧`
+                : `批量计算完成：共 ${successCount} 帧相位图，可点击播放`;
+        }
+        showNotification(
+            failureCount ? `批量计算完成，${failureCount} 帧失败` : `批量计算完成（${successCount} 帧）`,
+            failureCount ? 'warning' : 'success'
+        );
+        if (successCount > 0) showCGHVideoFrame(AppState.cghVideo.index);
+    }
+}
+
+async function exportCGHVideoZip() {
+    const frames = AppState.cghVideo.frames.filter(frame => frame.phase);
+    if (!frames.length) {
+        showNotification('暂无已计算的相位图可导出', 'warning');
+        return;
+    }
+    try {
+        const response = await fetch('/api/cgh/sequence/export', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                frames: frames.map(frame => frame.phase),
+                prefix: 'cgh'
+            })
+        });
+        if (!response.ok) {
+            let message = `HTTP ${response.status}`;
+            try {
+                message = (await response.json()).error || message;
+            } catch (_) { /* 保留 HTTP 状态信息 */ }
+            throw new Error(message);
+        }
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `cgh_video_sequence_${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        showNotification(`已导出 ${frames.length} 帧 8-bit BMP 序列 ZIP`, 'success');
+    } catch (error) {
+        showNotification('导出失败: ' + error.message, 'error');
+    }
 }
 
 // ==================== BMP 转换器 ====================
@@ -1878,7 +2406,7 @@ function applyPreset(preset) {
     document.getElementById('focus_slider').value = preset.focus_mm;
     document.getElementById('rotation_slider').value = preset.rotation_degree;
     setWavelength(preset.wavelength_nm);
-    scrollToSection('fresnel');
+    showModule('fresnel');
     showNotification(`已加载预设「${preset.name}」，可继续生成相位图`, 'success');
 }
 
@@ -1944,25 +2472,32 @@ function switchTab(event) {
         item.classList.remove('active');
     });
     link.classList.add('active');
-    scrollToSection(sectionId);
+    showModule(sectionId);
     return true;
 }
 
-function scrollToSection(sectionId) {
-    const section = document.getElementById(sectionId);
-    if (section) {
-        section.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
+function showModule(moduleId) {
+    const target = document.getElementById(moduleId);
+    if (!target || !target.classList.contains('module-card')) return;
+
+    // 单窗口模式：仅显示目标模块，其余模块隐藏
+    document.querySelectorAll('.workspace > .module-card').forEach(section => {
+        section.classList.toggle('module-active', section.id === moduleId);
+    });
 
     // 更新左侧导航激活状态
     document.querySelectorAll('.nav-list li').forEach(li => {
         li.classList.remove('active');
     });
 
-    const activeNav = document.querySelector(`.nav-list li[onclick="scrollToSection('${sectionId}')"]`);
+    const activeNav = document.querySelector(`.nav-list li[onclick="showModule('${moduleId}')"]`);
     if (activeNav) {
         activeNav.classList.add('active');
     }
+
+    // 切换后从模块标题开始显示
+    const workspace = document.querySelector('.workspace');
+    if (workspace) workspace.scrollTop = 0;
 }
 
 function startWorkflow(action) {
@@ -2033,6 +2568,24 @@ function serializeProjectSequenceItem(item, imageBudget) {
     return saved;
 }
 
+function serializeProjectCGHVideo(imageBudget) {
+    return {
+        frames: (AppState.cghVideo?.frames || []).filter(frame => frame.source !== 'slam').map((frame, index) => ({
+            id: frame.id,
+            label: typeof frame.label === 'string' ? frame.label.slice(0, 200) : '',
+            target: serializeProjectImage(
+                frame.target, imageBudget, `第 ${index + 1} 个视频帧目标图`
+            ),
+            phase: serializeProjectImage(
+                frame.phase, imageBudget, `第 ${index + 1} 个视频帧相位图`
+            ),
+            regenerated: serializeProjectImage(
+                frame.regenerated, imageBudget, `第 ${index + 1} 个视频帧再建图`
+            )
+        }))
+    };
+}
+
 function saveWorkflowProject() {
     try {
         const imageBudget = { pixels: 0 };
@@ -2088,6 +2641,19 @@ function saveWorkflowProject() {
             sequence: AppState.sequenceList.map(item =>
                 serializeProjectSequenceItem(item, imageBudget)
             ),
+            cgh_video: serializeProjectCGHVideo(imageBudget),
+            slam_motion: typeof window !== 'undefined' &&
+                typeof window.SLAMMotion?.getProjectState === 'function'
+                ? (() => {
+                    const motion = window.SLAMMotion.getProjectState();
+                    return {
+                        ...motion,
+                        image_data_url: serializeProjectImage(
+                            motion.image_data_url, imageBudget, 'SLAM 显微镜图像'
+                        )
+                    };
+                })()
+                : null,
             current_output: currentOutput,
             cgh
         };
@@ -2179,6 +2745,8 @@ function validateProjectControls(controls) {
         const control = document.getElementById(id);
         if (!control || !control.closest('.workspace') ||
             ['button', 'submit', 'reset', 'file', 'hidden'].includes(control.type)) return;
+        // 跳过暂态空 select（如傅里叶序列帧浏览器），其选项仅在会话内动态生成
+        if (control.tagName === 'SELECT' && control.options.length === 0) return;
         if (control.type === 'checkbox') {
             if (typeof value !== 'boolean') throw new Error(`参数 ${id} 格式无效`);
         } else if (control.tagName === 'SELECT') {
@@ -2352,6 +2920,46 @@ async function restoreProjectCGH(source, imageBudget, currentOutput = null) {
     };
 }
 
+async function restoreProjectCGHVideo(source, imageBudget) {
+    const frames = [];
+    if (source === null || source === undefined) return frames;
+    if (!source || typeof source !== 'object' || Array.isArray(source) ||
+        !Array.isArray(source.frames)) {
+        throw new Error('项目 CGH 视频序列格式无效');
+    }
+    // 上限与 CGH_VIDEO_MAX_FRAMES 保持一致；此处使用字面量，
+    // 因为项目序列化区可能被独立提取运行（见 test_project_roundtrip.cjs）
+    if (source.frames.length > 200) {
+        throw new Error('项目 CGH 视频序列帧数过多');
+    }
+    for (const [index, item] of source.frames.entries()) {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) {
+            throw new Error(`第 ${index + 1} 个视频帧格式无效`);
+        }
+        const target = await loadValidatedProjectImage(
+            item.target, imageBudget, `第 ${index + 1} 个视频帧目标图`
+        );
+        const phase = await loadValidatedProjectImage(
+            item.phase, imageBudget, `第 ${index + 1} 个视频帧相位图`
+        );
+        const regenerated = await loadValidatedProjectImage(
+            item.regenerated, imageBudget, `第 ${index + 1} 个视频帧再建图`
+        );
+        if (!phase && !target) {
+            throw new Error(`第 ${index + 1} 个视频帧缺少图像`);
+        }
+        frames.push({
+            id: Number.isSafeInteger(item.id) && item.id > 0 ? item.id : Date.now() + index,
+            label: typeof item.label === 'string' ? item.label.slice(0, 200) : '',
+            target: target?.data || null,
+            phase: phase?.data || null,
+            regenerated: regenerated?.data || null,
+            filename: ''
+        });
+    }
+    return frames;
+}
+
 function drawProjectPreview(canvasId, placeholderId, image) {
     const canvas = document.getElementById(canvasId);
     const placeholder = document.getElementById(placeholderId);
@@ -2408,6 +3016,18 @@ async function restoreWorkflowProject(project) {
     const cgh = project.version >= 2
         ? await restoreProjectCGH(project.cgh, imageBudget, currentOutput)
         : await restoreProjectCGH(null, imageBudget);
+    const cghVideoFrames = project.version >= 2
+        ? await restoreProjectCGHVideo(project.cgh_video, imageBudget)
+        : [];
+    let slamMotion = project.version >= 2 && project.slam_motion
+        ? project.slam_motion
+        : null;
+    if (slamMotion) {
+        const microscope = await loadValidatedProjectImage(
+            slamMotion.image_data_url, imageBudget, 'SLAM 显微镜图像'
+        );
+        slamMotion = { ...slamMotion, image_data_url: microscope?.data || null };
+    }
     const spotArraySnapshot = Object.prototype.hasOwnProperty.call(project, 'spot_array')
         ? project.spot_array
         : null;
@@ -2418,6 +3038,19 @@ async function restoreWorkflowProject(project) {
         ? validateSpotArrayProjectState(spotArraySnapshot, projectControlValues)
         : null;
 
+    if (typeof window !== 'undefined' &&
+            typeof window.SLAMMotion?.restoreProjectState === 'function') {
+        await window.SLAMMotion.restoreProjectState(slamMotion || {
+            version: 1,
+            image_data_url: null,
+            markers: [],
+            selected_marker_id: null,
+            origin: null,
+            assignments: [null, null, null],
+            paths: [[], [], []],
+            parameters: {}
+        });
+    }
     controls.forEach(([control, value]) => {
         if (control.type === 'checkbox') control.checked = value;
         else control.value = value;
@@ -2453,6 +3086,20 @@ async function restoreWorkflowProject(project) {
     updateSequenceList();
     AppState.cghData = cgh.data;
     restoreProjectCGHView(cgh);
+    stopCGHVideo();
+    AppState.cghVideo.frames.filter(frame => frame.source === 'slam').forEach(frame => {
+        [frame.phase, frame.regenerated].forEach(url => {
+            if (url && url.startsWith('blob:')) URL.revokeObjectURL(url);
+        });
+    });
+    AppState.cghVideo.frames = cghVideoFrames;
+    AppState.cghVideo.index = 0;
+    AppState.cghVideo.calculating = false;
+    renderCGHVideoFrames();
+    if (slamMotion && typeof window !== 'undefined' &&
+            typeof window.SLAMMotion?.restoreProjectState === 'function') {
+        showNotification('SLAM 标定与路径已恢复；需要重新生成相位帧后加入 CGH 序列', 'info');
+    }
     const placeholder = document.querySelector('.preview-container .placeholder');
     if (currentOutput) {
         displayPhaseImage(currentOutput.image);
@@ -2587,6 +3234,7 @@ async function runFourierSimulation() {
 
             fourierResultData = data;
             document.getElementById('fourier_download_btn').disabled = false;
+            hideFourierResultFrameBar();
             showNotification('傅里叶面强度模拟完成', 'success');
         } else {
             throw new Error(data.error || '模拟失败');
@@ -2628,6 +3276,447 @@ function downloadFourierResult() {
     }, 1000);
 
     showNotification('傅里叶模拟结果下载已开始（共3张）', 'success');
+}
+
+// ==================== 傅里叶面序列（视频）播放 ====================
+const FOURIER_SEQ_MAX_FRAMES = 60;
+const FourierSeqState = {
+    frames: [],        // { id, image, name }
+    simFrames: [],     // 后端返回的强度帧 { intensityColor, intensityLog, meanIntensity, peakIntensity }
+    simColormap: 'magma',
+    simulated: false,
+    playIndex: 0,
+    playTimer: null,
+    isPlaying: false
+};
+
+function setFourierSeqSimulated(simulated) {
+    FourierSeqState.simulated = simulated;
+    if (!simulated) {
+        FourierSeqState.simFrames = [];
+        hideFourierResultFrameBar();
+    }
+    document.getElementById('fourier_seq_gif_btn').disabled =
+        FourierSeqState.frames.length === 0;
+}
+
+// ---- 序列模拟结果 → 三个强度分布面板 同步 ----
+function setFourierResultPanelImage(imgId, placeholderId, src) {
+    const img = document.getElementById(imgId);
+    const placeholder = document.getElementById(placeholderId);
+    img.src = src;
+    img.style.display = 'block';
+    placeholder.style.display = 'none';
+}
+
+function hideFourierResultFrameBar() {
+    const bar = document.getElementById('fourier_result_frame_bar');
+    if (!bar) return;
+    bar.style.display = 'none';
+    document.getElementById('fourier_result_frame_select').replaceChildren();
+}
+
+function fillFourierResultFrameSelect(selectedIndex) {
+    const select = document.getElementById('fourier_result_frame_select');
+    select.replaceChildren();
+    FourierSeqState.simFrames.forEach((frame, index) => {
+        const option = document.createElement('option');
+        option.value = String(index);
+        option.textContent = `帧 ${index + 1}/${FourierSeqState.simFrames.length}`;
+        select.append(option);
+    });
+    select.value = String(selectedIndex);
+}
+
+function syncFourierResultFromSequence(frameIndex) {
+    const frames = FourierSeqState.simFrames;
+    if (!FourierSeqState.simulated || frames.length === 0) return;
+
+    const safeIndex = Math.min(Math.max(0, frameIndex), frames.length - 1);
+    const frame = frames[safeIndex];
+
+    setFourierResultPanelImage('fourier_color_img', 'fourier_color_placeholder', frame.intensity_color);
+    setFourierResultPanelImage('fourier_log_img', 'fourier_log_placeholder', frame.intensity_log);
+    setFourierResultPanelImage('fourier_raw_img', 'fourier_raw_placeholder', frame.intensity_raw);
+    document.getElementById('fourier_colormap_label').textContent =
+        `Colormap: ${FourierSeqState.simColormap} · 序列帧 ${safeIndex + 1}/${frames.length}`;
+
+    fillFourierResultFrameSelect(safeIndex);
+    document.getElementById('fourier_result_frame_bar').style.display = 'block';
+}
+
+function onFourierResultFrameChange() {
+    const select = document.getElementById('fourier_result_frame_select');
+    syncFourierResultFromSequence(parseInt(select.value, 10) || 0);
+}
+
+function updateFourierSeqStatus() {
+    const count = FourierSeqState.frames.length;
+    document.getElementById('fourier_seq_status').textContent =
+        `共 ${count} 帧（单次最多 ${FOURIER_SEQ_MAX_FRAMES} 帧）`;
+}
+
+function renderFourierSeqList() {
+    const listEl = document.getElementById('fourier_seq_list');
+    listEl.replaceChildren();
+
+    FourierSeqState.frames.forEach((item, index) => {
+        const row = document.createElement('div');
+        row.className = 'sequence-item';
+        row.dataset.id = String(item.id);
+        row.style.display = 'flex';
+        row.style.alignItems = 'center';
+        row.style.gap = '8px';
+
+        const order = document.createElement('span');
+        order.className = 'seq-index';
+        order.textContent = `#${index + 1}`;
+
+        const thumb = document.createElement('img');
+        thumb.src = item.image;
+        thumb.alt = `序列帧 ${index + 1}`;
+        thumb.style.maxWidth = '48px';
+        thumb.style.maxHeight = '36px';
+        thumb.style.borderRadius = '4px';
+        thumb.style.border = '1px solid #ddd';
+
+        const name = document.createElement('span');
+        name.className = 'seq-params';
+        name.style.flex = '1';
+        name.style.overflow = 'hidden';
+        name.style.textOverflow = 'ellipsis';
+        name.style.whiteSpace = 'nowrap';
+        name.textContent = item.name;
+
+        const moveUp = document.createElement('button');
+        moveUp.type = 'button';
+        moveUp.className = 'btn-remove-seq';
+        moveUp.textContent = '▲';
+        moveUp.title = '上移该帧';
+        moveUp.disabled = index === 0;
+        moveUp.setAttribute('aria-label', `上移第 ${index + 1} 帧`);
+        moveUp.addEventListener('click', () => moveFourierSeqFrame(item.id, -1));
+
+        const moveDown = document.createElement('button');
+        moveDown.type = 'button';
+        moveDown.className = 'btn-remove-seq';
+        moveDown.textContent = '▼';
+        moveDown.title = '下移该帧';
+        moveDown.disabled = index === FourierSeqState.frames.length - 1;
+        moveDown.setAttribute('aria-label', `下移第 ${index + 1} 帧`);
+        moveDown.addEventListener('click', () => moveFourierSeqFrame(item.id, 1));
+
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'btn-remove-seq';
+        remove.textContent = '✖';
+        remove.title = '移除该帧';
+        remove.setAttribute('aria-label', '移除该帧');
+        remove.addEventListener('click', () => removeFourierSeqFrame(item.id));
+
+        row.append(order, thumb, name, moveUp, moveDown, remove);
+        listEl.append(row);
+    });
+
+    updateFourierSeqStatus();
+}
+
+function moveFourierSeqFrame(id, delta) {
+    const currentIndex = FourierSeqState.frames.findIndex(item => item.id === id);
+    if (currentIndex < 0) return;
+    const targetIndex = currentIndex + delta;
+    if (targetIndex < 0 || targetIndex >= FourierSeqState.frames.length) return;
+
+    stopFourierSeq(true);
+
+    const frames = FourierSeqState.frames;
+    [frames[currentIndex], frames[targetIndex]] = [frames[targetIndex], frames[currentIndex]];
+
+    // 已批量模拟时同步重排强度帧，保持相位帧与强度帧一一对应，无需重新模拟
+    if (FourierSeqState.simulated && FourierSeqState.simFrames.length === frames.length) {
+        const simFrames = FourierSeqState.simFrames;
+        [simFrames[currentIndex], simFrames[targetIndex]] =
+            [simFrames[targetIndex], simFrames[currentIndex]];
+    } else {
+        setFourierSeqSimulated(false);
+    }
+
+    renderFourierSeqList();
+}
+
+function addFourierSeqFrame(image, name) {
+    if (FourierSeqState.frames.length >= FOURIER_SEQ_MAX_FRAMES) {
+        showNotification(`序列最多 ${FOURIER_SEQ_MAX_FRAMES} 帧`, 'warning');
+        return false;
+    }
+    stopFourierSeq(true);
+    setFourierSeqSimulated(false);
+    FourierSeqState.frames.push({ id: Date.now() + Math.random(), image, name });
+    renderFourierSeqList();
+    return true;
+}
+
+function addCurrentPhaseToFourierSeq() {
+    const phaseImg = document.getElementById('phase_image');
+    if (!phaseImg || !phaseImg.src || phaseImg.style.display === 'none') {
+        showNotification('请先生成或上传相位图', 'warning');
+        return;
+    }
+    if (addFourierSeqFrame(phaseImg.src, '当前相位图')) {
+        showNotification('已添加为序列帧', 'success');
+    }
+}
+
+function handleFourierSeqUpload(event) {
+    const files = Array.from(event.target.files || []);
+    event.target.value = '';
+    if (!files.length) return;
+
+    let queued = 0;
+    let pending = files.length;
+    files.forEach(file => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            if (addFourierSeqFrame(e.target.result, file.name)) queued++;
+            pending--;
+            if (pending === 0 && queued > 0) {
+                showNotification(`已添加 ${queued} 帧到序列`, 'success');
+            }
+        };
+        reader.readAsDataURL(file);
+    });
+}
+
+function removeFourierSeqFrame(id) {
+    stopFourierSeq(true);
+    setFourierSeqSimulated(false);
+    FourierSeqState.frames = FourierSeqState.frames.filter(item => item.id !== id);
+    renderFourierSeqList();
+}
+
+function clearFourierSeq() {
+    if (FourierSeqState.frames.length === 0) return;
+    stopFourierSeq(true);
+    setFourierSeqSimulated(false);
+    FourierSeqState.frames = [];
+    renderFourierSeqList();
+    resetFourierSeqPlayer();
+    showNotification('序列已清空', 'info');
+}
+
+function resetFourierSeqPlayer() {
+    const img = document.getElementById('fourier_seq_player_img');
+    const placeholder = document.getElementById('fourier_seq_player_placeholder');
+    img.style.display = 'none';
+    img.src = '';
+    placeholder.style.display = '';
+    document.getElementById('fourier_seq_frame_label').textContent = '帧 -/-';
+}
+
+function getFourierSeqSimParams() {
+    return {
+        illumination_type: document.getElementById('fourier_illumination_type').value,
+        beam_radius: parseFloat(document.getElementById('fourier_beam_radius').value),
+        width: parseInt(document.getElementById('fourier_width').value),
+        height: parseInt(document.getElementById('fourier_height').value),
+        colormap: document.getElementById('fourier_colormap').value
+    };
+}
+
+async function runFourierSeqSimulation() {
+    if (FourierSeqState.frames.length === 0) {
+        showNotification('请先添加序列帧', 'warning');
+        return;
+    }
+
+    stopFourierSeq(true);
+    showLoading(true);
+    const simBtn = document.getElementById('fourier_seq_sim_btn');
+    simBtn.disabled = true;
+    const progressEl = document.getElementById('fourier_seq_progress');
+    progressEl.textContent = `正在批量模拟 ${FourierSeqState.frames.length} 帧...`;
+
+    try {
+        const response = await fetch('/api/simulate/fourier/sequence', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                phase_images: FourierSeqState.frames.map(f => f.image),
+                ...getFourierSeqSimParams()
+            })
+        });
+
+        const data = await response.json();
+        if (!data.success) throw new Error(data.error || '批量模拟失败');
+
+        FourierSeqState.simFrames = data.frames;
+        FourierSeqState.simColormap = data.colormap;
+        setFourierSeqSimulated(true);
+
+        // 需求：批量模拟后同步更新模块中的彩色/对数/原始强度分布面板
+        syncFourierResultFromSequence(0);
+
+        const means = data.frames.map(f => f.mean_intensity);
+        const meanOfMeans = (means.reduce((a, b) => a + b, 0) / means.length).toFixed(4);
+        progressEl.textContent =
+            `✅ 模拟完成：${data.frame_count} 帧（colormap: ${data.colormap}，照明: ${data.illumination_type}），分布面板已同步`;
+        document.getElementById('fourier_seq_stats').textContent =
+            `帧平均强度均值 ${meanOfMeans}，分布面板显示序列第 1 帧，可用选择器切换帧或播放/导出 GIF。`;
+        showNotification(`序列模拟完成，共 ${data.frame_count} 帧`, 'success');
+    } catch (error) {
+        console.error('序列模拟错误:', error);
+        progressEl.textContent = '❌ 模拟失败：' + error.message;
+        showNotification('序列模拟失败: ' + error.message, 'error');
+    } finally {
+        showLoading(false);
+        simBtn.disabled = false;
+    }
+}
+
+function getFourierSeqPlaylist() {
+    const mode = document.getElementById('fourier_seq_play_mode').value;
+    if (mode === 'phase') {
+        return FourierSeqState.frames.map((frame, index) => ({
+            image: frame.image,
+            label: `相位帧 ${index + 1}/${FourierSeqState.frames.length}`
+        }));
+    }
+    if (!FourierSeqState.simulated || FourierSeqState.simFrames.length === 0) {
+        return null;
+    }
+    return FourierSeqState.simFrames.map((frame, index) => ({
+        image: frame.intensity_color,
+        label: `强度帧 ${index + 1}/${FourierSeqState.simFrames.length} (峰值 ${frame.peak_intensity.toFixed(3)})`
+    }));
+}
+
+function showFourierSeqFrame(frame) {
+    const img = document.getElementById('fourier_seq_player_img');
+    const placeholder = document.getElementById('fourier_seq_player_placeholder');
+    img.src = frame.image;
+    img.style.display = 'block';
+    placeholder.style.display = 'none';
+    document.getElementById('fourier_seq_frame_label').textContent = frame.label;
+}
+
+function onFourierSeqModeChange() {
+    if (FourierSeqState.isPlaying) stopFourierSeq();
+    resetFourierSeqPlayer();
+}
+
+function playFourierSeq() {
+    if (FourierSeqState.isPlaying) return;
+
+    const playlist = getFourierSeqPlaylist();
+    if (!playlist) {
+        showNotification('请先批量模拟序列（或切换到相位图模式）', 'warning');
+        return;
+    }
+    if (playlist.length === 0) {
+        showNotification('序列为空，请先添加帧', 'warning');
+        return;
+    }
+
+    const interval = Math.max(
+        50, parseInt(document.getElementById('fourier_seq_interval').value, 10) || 300
+    );
+    const loop = document.getElementById('fourier_seq_loop').checked;
+    if (FourierSeqState.playIndex >= playlist.length) FourierSeqState.playIndex = 0;
+
+    const advance = () => {
+        const current = getFourierSeqPlaylist();
+        if (!current || current.length === 0) {
+            stopFourierSeq(true);
+            return;
+        }
+        if (FourierSeqState.playIndex >= current.length) {
+            if (loop) {
+                FourierSeqState.playIndex = 0;
+            } else {
+                stopFourierSeq(true);
+                return;
+            }
+        }
+        showFourierSeqFrame(current[FourierSeqState.playIndex]);
+        FourierSeqState.playIndex++;
+    };
+
+    advance();
+    FourierSeqState.playTimer = setInterval(advance, interval);
+    FourierSeqState.isPlaying = true;
+    document.getElementById('fourier_seq_play_btn').disabled = true;
+    document.getElementById('fourier_seq_pause_btn').disabled = false;
+    showNotification('序列播放已开始', 'info');
+}
+
+function pauseFourierSeq() {
+    if (FourierSeqState.playTimer) {
+        clearInterval(FourierSeqState.playTimer);
+        FourierSeqState.playTimer = null;
+        FourierSeqState.isPlaying = false;
+        document.getElementById('fourier_seq_play_btn').disabled = false;
+        document.getElementById('fourier_seq_pause_btn').disabled = true;
+        showNotification('序列播放已暂停', 'info');
+    }
+}
+
+function stopFourierSeq(silent = false) {
+    if (FourierSeqState.playTimer) {
+        clearInterval(FourierSeqState.playTimer);
+        FourierSeqState.playTimer = null;
+    }
+    const wasPlaying = FourierSeqState.isPlaying;
+    FourierSeqState.isPlaying = false;
+    FourierSeqState.playIndex = 0;
+    document.getElementById('fourier_seq_play_btn').disabled = false;
+    document.getElementById('fourier_seq_pause_btn').disabled = true;
+    if (wasPlaying && !silent) showNotification('序列播放已停止', 'info');
+}
+
+async function exportFourierSeqGif() {
+    if (FourierSeqState.frames.length === 0) {
+        showNotification('请先添加序列帧', 'warning');
+        return;
+    }
+
+    showLoading(true);
+    const gifBtn = document.getElementById('fourier_seq_gif_btn');
+    gifBtn.disabled = true;
+
+    try {
+        const response = await fetch('/api/simulate/fourier/export-gif', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                phase_images: FourierSeqState.frames.map(f => f.image),
+                ...getFourierSeqSimParams(),
+                frame_duration_ms: Math.max(
+                    20, parseInt(document.getElementById('fourier_seq_interval').value, 10) || 200
+                ),
+                intensity_mode: 'color'
+            })
+        });
+
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.error || `导出失败 (${response.status})`);
+        }
+
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `fourier_sequence_${Date.now()}.gif`;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 3000);
+        showNotification('GIF 导出已开始', 'success');
+    } catch (error) {
+        console.error('GIF导出错误:', error);
+        showNotification('GIF 导出失败: ' + error.message, 'error');
+    } finally {
+        showLoading(false);
+        gifBtn.disabled = FourierSeqState.frames.length === 0;
+    }
 }
 
 // ==================== 历史记录 ====================

@@ -1,0 +1,353 @@
+.slam-motion-layout {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    align-items: start;
+}
+
+.slam-motion-pane {
+    min-width: 0;
+    padding: 12px;
+    background: #fff;
+    border: 1px solid var(--border-color, #cbd2d8);
+    border-radius: 6px;
+}
+
+.slam-motion-pane h3,
+.slam-motion-pane h4 {
+    margin: 0 0 10px;
+    color: var(--text-primary, #27333b);
+}
+
+.slam-motion-pane h3 {
+    font-size: 15px;
+    font-weight: 650;
+}
+
+.slam-motion-pane h4 {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.slam-motion-pane .hint-text {
+    color: var(--text-secondary, #66727b);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.slam-canvas-frame {
+    width: 100%;
+    overflow: hidden;
+    background: #111a20;
+    border: 1px solid #bfc7cc;
+    border-radius: 4px;
+}
+
+.slam-canvas-frame canvas {
+    display: block;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 3 / 2;
+    touch-action: manipulation;
+}
+
+#slam_microscope_canvas {
+    cursor: crosshair;
+}
+
+#slam_focus_canvas {
+    cursor: crosshair;
+}
+
+.slam-canvas-frame canvas:focus-visible {
+    outline: 3px solid #087f8c;
+    outline-offset: -3px;
+}
+
+.slam-toolbar,
+.slam-action-row,
+.slam-path-controls,
+.slam-spot-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 7px;
+}
+
+.slam-toolbar,
+.slam-action-row,
+.slam-path-controls {
+    margin: 10px 0;
+}
+
+.slam-spot-tabs {
+    margin: 10px 0;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #dde2e5;
+}
+
+.slam-spot-tabs button {
+    min-width: 88px;
+    min-height: 34px;
+    padding: 6px 10px;
+    color: #34414a;
+    background: #f4f6f7;
+    border: 1px solid #cbd2d8;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.slam-spot-tabs button[data-spot-index="0"]::before,
+.slam-spot-tabs button[data-spot-index="1"]::before,
+.slam-spot-tabs button[data-spot-index="2"]::before {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    margin-right: 6px;
+    content: "";
+    background: #d14d41;
+    border-radius: 50%;
+}
+
+.slam-spot-tabs button[data-spot-index="1"]::before {
+    background: #167d6b;
+}
+
+.slam-spot-tabs button[data-spot-index="2"]::before {
+    background: #2468a0;
+}
+
+.slam-spot-tabs button.is-active {
+    color: #fff;
+    background: #33434d;
+    border-color: #33434d;
+}
+
+.slam-spot-tabs button:focus-visible,
+.slam-toolbar button:focus-visible,
+.slam-action-row button:focus-visible,
+.slam-path-controls button:focus-visible,
+.slam-marker-row button:focus-visible {
+    outline: 3px solid #087f8c;
+    outline-offset: 2px;
+}
+
+.slam-marker-list {
+    display: grid;
+    gap: 5px;
+    max-height: 190px;
+    overflow-y: auto;
+    margin-top: 8px;
+}
+
+.slam-marker-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(100px, auto) 32px;
+    gap: 8px;
+    align-items: center;
+    min-height: 36px;
+    padding: 4px 6px;
+    border: 1px solid #e0e5e8;
+    border-radius: 4px;
+}
+
+.slam-marker-row.is-selected {
+    border-color: #087f8c;
+    background: #eef8f8;
+}
+
+.slam-marker-select,
+.slam-marker-remove {
+    min-width: 0;
+    min-height: 28px;
+    color: #34414a;
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    text-align: left;
+}
+
+.slam-marker-select {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.slam-marker-row span {
+    color: #68757e;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.slam-marker-remove {
+    width: 28px;
+    color: #9a3a32;
+    font-size: 19px;
+    line-height: 1;
+    text-align: center;
+}
+
+.slam-empty-state {
+    margin: 5px 0;
+    color: #6c7880;
+    font-size: 12px;
+}
+
+.slam-params-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px 12px;
+}
+
+.slam-params-grid .param-item {
+    min-width: 0;
+    margin: 0;
+}
+
+.slam-params-grid input,
+.slam-params-grid select,
+.slam-motion-pane input,
+.slam-motion-pane select {
+    max-width: 100%;
+}
+
+.slam-calibration-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin: 8px 0;
+}
+
+.slam-calibration-row label {
+    display: block;
+    min-width: 0;
+    color: #46535c;
+    font-size: 12px;
+}
+
+.slam-calibration-row input,
+.slam-calibration-row select {
+    display: block;
+    width: 100%;
+    min-height: 34px;
+    margin-top: 4px;
+}
+
+.slam-image-input {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin: 8px 0;
+}
+
+.slam-origin-button.is-active {
+    color: #493c00;
+    background: #f5d547;
+    border-color: #d2b83c;
+}
+
+.slam-motion-status {
+    min-height: 22px;
+    margin: 8px 0;
+    color: #4d5961;
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.slam-motion-status[data-state="success"] {
+    color: #16734b;
+}
+
+.slam-motion-status[data-state="error"] {
+    color: #a72f2f;
+}
+
+.slam-motion-status[data-state="warning"] {
+    color: #875c00;
+}
+
+.slam-progress {
+    display: block;
+    width: 100%;
+    height: 9px;
+    accent-color: #087f8c;
+}
+
+.slam-preview-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.slam-preview-box {
+    min-width: 0;
+}
+
+.slam-preview-box img {
+    display: block;
+    width: 100%;
+    aspect-ratio: 3 / 2;
+    object-fit: contain;
+    background: #101820;
+    border: 1px solid #343e45;
+    border-radius: 3px;
+}
+
+.slam-preview-box figcaption {
+    margin-bottom: 4px;
+    color: #56636c;
+    font-size: 12px;
+}
+
+.slam-frame-indicator {
+    min-width: 86px;
+    color: #4b5760;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+}
+
+.slam-note {
+    padding: 8px 10px;
+    color: #5c4b20;
+    background: #fff9e5;
+    border-left: 3px solid #d0a52f;
+    font-size: 11px;
+    line-height: 1.45;
+}
+
+@media (max-width: 1100px) {
+    .slam-motion-layout {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+@media (max-width: 600px) {
+    .slam-motion-pane {
+        padding: 9px;
+    }
+
+    .slam-params-grid,
+    .slam-calibration-row,
+    .slam-preview-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .slam-marker-row {
+        grid-template-columns: minmax(0, 1fr) auto 30px;
+        gap: 4px;
+    }
+
+    .slam-marker-row span {
+        font-size: 10px;
+    }
+
+    .slam-action-row > button {
+        flex: 1 1 42%;
+        justify-content: center;
+    }
+}

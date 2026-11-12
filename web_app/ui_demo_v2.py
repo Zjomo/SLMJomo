@@ -72,9 +72,8 @@ def run_demo(base_url: str) -> int:
         snap("03_sequence_added")
 
         # P0-4 vortex generate + add
-        step("navigate to vortex", lambda: page.locator("li[onclick=\"scrollToSection('vortex')\"]").click())
+        step("navigate to vortex", lambda: page.locator("li[onclick=\"showModule('vortex')\"]").click())
         page.wait_for_timeout(600)
-        step("expand vortex module", lambda: page.locator("#vortex button[onclick=\"toggleModule('vortex')\"]").click())
         step("set vortex parameters", lambda: (page.locator("#vortex_lnumber").fill("2"),
                                                page.locator("#vortex_width").fill("256"),
                                                page.locator("#vortex_height").fill("256")))
@@ -86,8 +85,8 @@ def run_demo(base_url: str) -> int:
         snap("04_vortex_result")
 
         # P0-5 sequence play/pause/stop
-        # Note: no sidebar nav entry targets #sequence-panel; scroll directly.
-        step("navigate to sequence", lambda: page.locator("#sequence-panel").scroll_into_view_if_needed())
+        # Switch to the sequence window via the top menu.
+        step("navigate to sequence", lambda: page.locator(".menu-item[href='#sequence-panel']").click())
         page.wait_for_timeout(400)
         step("check sequence items", lambda: page.wait_for_function(
             "AppState.sequenceList.length >= 2", timeout=5000))
@@ -102,9 +101,8 @@ def run_demo(base_url: str) -> int:
         step("stop sequence", lambda: page.locator("button[onclick='stopSequence()']").click())
 
         # P0-6 BMP converter
-        step("navigate to bmp converter", lambda: page.locator("li[onclick=\"scrollToSection('bmp-converter')\"]").click())
+        step("navigate to bmp converter", lambda: page.locator("li[onclick=\"showModule('bmp-converter')\"]").click())
         page.wait_for_timeout(400)
-        step("expand bmp module", lambda: page.locator("#bmp-converter button[onclick=\"toggleModule('bmp-converter')\"]").click())
         step("upload demo image", lambda: page.locator("#converter_input_image").set_input_files(str(DEMO_IMG)))
         page.wait_for_timeout(600)
         step("set bmp output 512x512", lambda: (page.locator("#converter_width").fill("512"),
@@ -114,9 +112,8 @@ def run_demo(base_url: str) -> int:
         snap("06_bmp_result")
 
         # P0-7 Fourier simulation
-        step("navigate to fourier", lambda: page.locator("li[onclick=\"scrollToSection('fourier-sim')\"]").click())
+        step("navigate to fourier", lambda: page.locator("li[onclick=\"showModule('fourier-sim')\"]").click())
         page.wait_for_timeout(400)
-        step("expand fourier module", lambda: page.locator("#fourier-sim button[onclick=\"toggleModule('fourier-sim')\"]").click())
         step("use current phase", lambda: page.locator("button[onclick='useCurrentPhaseForFourier()']").click())
         step("select gaussian illumination", lambda: page.locator("#fourier_illumination_type").select_option("gaussian"))
         step("set fourier output 256x256", lambda: (page.locator("#fourier_width").fill("256"),
@@ -126,7 +123,9 @@ def run_demo(base_url: str) -> int:
         step("wait fourier color result", lambda: page.locator("#fourier_color_img").wait_for(state="visible", timeout=60000))
         snap("08_fourier_result")
 
-        # P0-8 simulated device
+        # P0-8 simulated device (buttons live in the fresnel window)
+        step("navigate back to fresnel", lambda: page.locator("li[onclick=\"showModule('fresnel')\"]").click())
+        page.wait_for_timeout(400)
         step("connect device", lambda: page.locator("button[onclick='connectDevice()']").click())
         page.wait_for_timeout(400)
         step("show on simulated SLM", lambda: page.locator("button[onclick='showOnSLM()']").click())

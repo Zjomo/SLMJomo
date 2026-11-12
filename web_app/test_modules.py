@@ -63,6 +63,11 @@ def test_api(endpoint, payload, description, verifier=None):
         return False
 
 
+# This is a callable helper for the standalone HTTP smoke script, not a
+# pytest test function with fixture arguments.
+test_api.__test__ = False
+
+
 def create_test_target_image():
     """创建测试用的目标图像"""
     # 创建一个简单的十字目标图像

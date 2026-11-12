@@ -32,7 +32,6 @@ for (const label of ['校正', '设置']) {
     assert.match(link.unavailableMessage, new RegExp(label));
 }
 
-const scrolledTargets = [];
 const notifications = [];
 const menuElements = menuLinks.map(link => {
     const classes = new Set(link.label.includes('首页') ? ['active'] : []);
@@ -53,17 +52,34 @@ const menuElements = menuLinks.map(link => {
         }
     };
 });
-const sectionElements = new Map(['fresnel', 'sequence-panel', 'paint-board'].map(id => [id, {
-    id,
-    scrollIntoView() { scrolledTargets.push(id); }
-}]));
+const sectionElements = new Map(['fresnel', 'sequence-panel', 'paint-board'].map(id => {
+    // fresnel is the initial single-window view rendered by the template.
+    const classes = new Set(id === 'fresnel' ? ['module-card', 'module-active'] : ['module-card']);
+    return [id, {
+        id,
+        classList: {
+            add(name) { classes.add(name); },
+            remove(name) { classes.delete(name); },
+            contains(name) { return classes.has(name); },
+            toggle(name, force) {
+                const shouldAdd = force === undefined ? !classes.has(name) : force;
+                if (shouldAdd) { classes.add(name); return true; }
+                classes.delete(name); return false;
+            }
+        }
+    }];
+}));
 const context = vm.createContext({
     document: {
         addEventListener() {},
         createElement() { return { style: {}, textContent: '' }; },
         head: { appendChild() {} },
         getElementById(id) { return sectionElements.get(id) || null; },
-        querySelectorAll(selector) { return selector === '.menu-item' ? menuElements : []; },
+        querySelectorAll(selector) {
+            if (selector === '.menu-item') return menuElements;
+            if (selector === '.workspace > .module-card') return [...sectionElements.values()];
+            return [];
+        },
         querySelector() { return null; }
     },
     showNotification(message, kind) { notifications.push({ message, kind }); }
@@ -78,7 +94,10 @@ assert.equal(context.switchTab({
     preventDefault() { defaultPrevented = true; }
 }), true);
 assert.equal(defaultPrevented, true);
-assert.deepEqual(scrolledTargets, ['sequence-panel']);
+assert.equal(sectionElements.get('sequence-panel').classList.contains('module-active'), true,
+    'sequence panel should become the visible single window');
+assert.equal(sectionElements.get('fresnel').classList.contains('module-active'), false,
+    'fresnel module should be hidden after switching to the sequence panel');
 assert.equal(sequenceLink.classList.contains('active'), true);
 assert.equal(menuElements[0].classList.contains('active'), false);
 

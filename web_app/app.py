@@ -11,11 +11,21 @@ import io
 import base64
 import math
 import os
+import shutil
+import threading
+import zipfile
+import uuid
 from datetime import datetime
 import json
 from functools import lru_cache
 from scipy import ndimage
 from sqlalchemy import inspect
+from slam_motion import (
+    calibrate_pixel_to_sample_um,
+    plan_motion_frames,
+    sample_to_focus_um,
+    validate_minimum_spacing,
+)
 
 # 创建Flask应用
 app = Flask(__name__)
@@ -31,9 +41,17 @@ OUTPUT_DIR = os.environ.get(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output_phase_patterns')
 )
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+LINGO_OUTPUT_DIR = os.environ.get(
+    'SLMJOMO_LINGO_OUTPUT_DIR',
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output', 'Lingo')
+)
 
 # 初始化数据库
 db = SQLAlchemy(app)
+
+# 注册 USB_SLMControl 模块（Hamamatsu LCOS-SLM USB 控制还原）
+from usb_slm_routes import usb_slm_bp  # noqa: E402
+app.register_blueprint(usb_slm_bp)
 
 
 # ==================== 数据库模型 ====================
@@ -343,10 +361,6 @@ class SLMPatternGenerator:
         if target_spots is not None:
             target_spots = SLMPatternGenerator._normalize_target_spots(target_spots)
             spot_count = len(target_spots)
-            if algorithm != 'gaussian_wgs':
-                raise ValueError(
-                    "自由二维光斑位置仅支持 gaussian_wgs 算法"
-                )
         if not 2 <= spot_count <= 15:
             raise ValueError("光斑数量必须在 2 到 15 之间")
         if pixel_size_um <= 0:
@@ -400,19 +414,47 @@ class SLMPatternGenerator:
                 target_spots=target_spots
             )
         elif algorithm == 'uniform_grating':
-            phase = SLMPatternGenerator._uniform_spot_grating_phase(
-                X=X,
-                Y=Y,
-                focal_length=focal_length,
-                wavelength_mm=wavelength_mm,
-                pixel_size_mm=pixel_size_mm,
-                spot_spacing=spot_spacing,
-                spot_count=spot_count,
-                with_lens=with_lens
-            )
+            if target_spots is not None:
+                phase = SLMPatternGenerator._uniform_2d_spot_grating_phase(
+                    X=X,
+                    Y=Y,
+                    focal_length=focal_length,
+                    wavelength_mm=wavelength_mm,
+                    target_spots=target_spots,
+                    with_lens=with_lens
+                )
+            else:
+                phase = SLMPatternGenerator._uniform_spot_grating_phase(
+                    X=X,
+                    Y=Y,
+                    focal_length=focal_length,
+                    wavelength_mm=wavelength_mm,
+                    pixel_size_mm=pixel_size_mm,
+                    spot_spacing=spot_spacing,
+                    spot_count=spot_count,
+                    with_lens=with_lens
+                )
         elif algorithm == 'dammann':
             if spot_count != 3:
                 raise ValueError("1x3 达曼光栅仅支持 3 个光斑")
+            center_x_mm = 0.0
+            center_y_mm = 0.0
+            if target_spots is not None:
+                ordered = sorted(target_spots, key=lambda spot: spot['x_mm'])
+                dx1 = ordered[1]['x_mm'] - ordered[0]['x_mm']
+                dx2 = ordered[2]['x_mm'] - ordered[1]['x_mm']
+                scale = max(abs(dx1), abs(dx2), 1.0)
+                tolerance = scale * 1e-6
+                if dx1 <= 0 or abs(dx1 - dx2) > tolerance or any(
+                    abs(spot['y_mm'] - ordered[0]['y_mm']) > tolerance
+                    for spot in ordered[1:]
+                ):
+                    raise ValueError(
+                        "1×3 达曼光栅要求三个光斑位于同一水平线上且等间距"
+                    )
+                spot_spacing = (dx1 + dx2) / 2
+                center_x_mm = sum(spot['x_mm'] for spot in ordered) / 3
+                center_y_mm = sum(spot['y_mm'] for spot in ordered) / 3
             phase = SLMPatternGenerator._dammann_three_spot_phase(
                 X=X,
                 Y=Y,
@@ -421,29 +463,37 @@ class SLMPatternGenerator:
                 pixel_size_mm=pixel_size_mm,
                 spot_spacing=spot_spacing,
                 incident_beam_diameter_mm=incident_beam_diameter_mm,
-                with_lens=with_lens
+                with_lens=with_lens,
+                center_x_mm=center_x_mm,
+                center_y_mm=center_y_mm
             )
         else:
             field = np.zeros((height, width), dtype=np.complex128)
-            target_positions = (
-                np.arange(spot_count) - (spot_count - 1) / 2
-            ) * spot_spacing
-            target_weights = np.ones(spot_count)
-            if spot_count == 3:
-                target_weights[1] = 1.085
+            if target_spots is None:
+                target_positions = [
+                    (position, 0.0, 1.085 if spot_count == 3 and index == 1 else 1.0)
+                    for index, position in enumerate(
+                        (np.arange(spot_count) - (spot_count - 1) / 2) * spot_spacing
+                    )
+                ]
+            else:
+                target_positions = [
+                    (spot['x_mm'], spot['y_mm'], spot['weight'])
+                    for spot in target_spots
+                ]
             if with_lens:
-                for target_x, weight in zip(target_positions, target_weights):
+                for target_x, target_y, weight in target_positions:
                     optical_path = np.sqrt(
-                        (X - target_x) ** 2 + Y ** 2 + focal_length ** 2
+                        (X - target_x) ** 2 + (Y - target_y) ** 2 + focal_length ** 2
                     )
                     field += weight * np.exp(
                         -1j * k * (optical_path - focal_length)
                     )
             else:
                 # 无透镜：抛物线近似的远场分束（纯线性相位光栅）
-                for target_x, weight in zip(target_positions, target_weights):
+                for target_x, target_y, weight in target_positions:
                     field += weight * np.exp(
-                        1j * k * X * target_x / focal_length
+                        1j * k * (X * target_x + Y * target_y) / focal_length
                     )
             phase = np.angle(field)
 
@@ -536,6 +586,32 @@ class SLMPatternGenerator:
         return lens_phase + grating_phase
 
     @staticmethod
+    def _uniform_2d_spot_grating_phase(
+        X,
+        Y,
+        focal_length,
+        wavelength_mm,
+        target_spots,
+        with_lens=True
+    ):
+        """Encode arbitrary 2D focal-plane orders with equal field weights."""
+        k = 2 * np.pi / wavelength_mm
+        grating_field = np.zeros(X.shape, dtype=np.complex128)
+        for spot in target_spots:
+            grating_field += np.sqrt(spot['weight']) * np.exp(
+                1j * k * (
+                    X * spot['x_mm'] + Y * spot['y_mm']
+                ) / focal_length
+            )
+        grating_phase = np.angle(grating_field)
+        if not with_lens:
+            return grating_phase
+        lens_phase = -np.pi * (X**2 + Y**2) / (
+            wavelength_mm * focal_length
+        )
+        return lens_phase + grating_phase
+
+    @staticmethod
     @lru_cache(maxsize=16)
     def _design_equal_order_phase_cell(spot_count):
         """Design a deterministic multilevel phase cell with equal orders."""
@@ -594,7 +670,9 @@ class SLMPatternGenerator:
         pixel_size_mm,
         spot_spacing,
         incident_beam_diameter_mm,
-        with_lens=True
+        with_lens=True,
+        center_x_mm=0.0,
+        center_y_mm=0.0
     ):
         """Create an equal-order 1x3 binary Dammann grating plus a lens."""
         period_mm = wavelength_mm * focal_length / spot_spacing
@@ -638,6 +716,10 @@ class SLMPatternGenerator:
                 best_binary_row = binary_row
 
         grating_phase = np.where(best_binary_row[np.newaxis, :], np.pi, 0.0)
+        if center_x_mm or center_y_mm:
+            grating_phase = grating_phase + (2 * np.pi / wavelength_mm) * (
+                X * center_x_mm + Y * center_y_mm
+            ) / focal_length
         if not with_lens:
             return np.broadcast_to(grating_phase, X.shape)
         lens_phase = -np.pi * (X**2 + Y**2) / (
@@ -1631,6 +1713,34 @@ class FourierSimulator:
         return (np.clip(rgb, 0, 1) * 255).astype(np.uint8)
 
     @staticmethod
+    def decode_phase_image(phase_image_base64, output_width, output_height):
+        """解码 base64 相位图为灰度数组，并调整到指定输出尺寸"""
+        if ',' in phase_image_base64:
+            phase_image_base64 = phase_image_base64.split(',', 1)[1]
+        image_data = base64.b64decode(phase_image_base64)
+        phase_img = Image.open(io.BytesIO(image_data)).convert('L')
+
+        if phase_img.size != (output_width, output_height):
+            phase_img = phase_img.resize((output_width, output_height), Image.LANCZOS)
+        return np.array(phase_img)
+
+    @staticmethod
+    def build_illumination(illumination_type, width, height, beam_radius):
+        """根据照明类型生成照明振幅矩阵，uniform 返回 None"""
+        if illumination_type == 'gaussian':
+            return FourierSimulator.gaussian_illumination(width, height, beam_radius)
+        return None
+
+    @staticmethod
+    def _rgb_to_base64(rgb_array):
+        """将 RGB uint8 数组编码为 PNG base64 data URL"""
+        img = Image.fromarray(rgb_array, mode='RGB')
+        buffer = io.BytesIO()
+        img.save(buffer, format='PNG')
+        buffer.seek(0)
+        return f"data:image/png;base64,{base64.b64encode(buffer.getvalue()).decode()}"
+
+    @staticmethod
     def run_simulation(phase_image_base64, illumination_type='uniform',
                        beam_radius=250, output_width=512, output_height=512,
                        colormap='magma'):
@@ -1647,25 +1757,15 @@ class FourierSimulator:
             dict: 包含模拟结果图像
         """
         # 解码输入图像
-        if ',' in phase_image_base64:
-            phase_image_base64 = phase_image_base64.split(',', 1)[1]
-        image_data = base64.b64decode(phase_image_base64)
-        phase_img = Image.open(io.BytesIO(image_data)).convert('L')
-
-        # 调整尺寸
-        if phase_img.size != (output_width, output_height):
-            phase_img = phase_img.resize((output_width, output_height), Image.LANCZOS)
-
-        gray_array = np.array(phase_img)
+        gray_array = FourierSimulator.decode_phase_image(
+            phase_image_base64, output_width, output_height
+        )
         phase = FourierSimulator.gray_to_phase(gray_array)
 
         # 生成照明光束
-        if illumination_type == 'gaussian':
-            illumination = FourierSimulator.gaussian_illumination(
-                output_width, output_height, beam_radius
-            )
-        else:
-            illumination = None
+        illumination = FourierSimulator.build_illumination(
+            illumination_type, output_width, output_height, beam_radius
+        )
 
         # 模拟傅里叶面强度
         intensity_log, intensity_raw = FourierSimulator.simulate_fourier_intensity(
@@ -1679,18 +1779,10 @@ class FourierSimulator:
         # 伪彩色强度图
         intensity_color_img = FourierSimulator.apply_colormap(intensity_log_img, colormap)
 
-        # RGB base64 辅助函数
-        def array_rgb_to_base64(rgb_array):
-            img = Image.fromarray(rgb_array, mode='RGB')
-            buffer = io.BytesIO()
-            img.save(buffer, format='PNG')
-            buffer.seek(0)
-            return f"data:image/png;base64,{base64.b64encode(buffer.getvalue()).decode()}"
-
         return {
             'intensity_log': SLMPatternGenerator.array_to_base64(intensity_log_img),
             'intensity_raw': SLMPatternGenerator.array_to_base64(intensity_raw_img),
-            'intensity_color': array_rgb_to_base64(intensity_color_img),
+            'intensity_color': FourierSimulator._rgb_to_base64(intensity_color_img),
             'colormap': colormap,
             'illumination_preview': SLMPatternGenerator.array_to_base64(
                 (illumination * 255).astype(np.uint8) if illumination is not None
@@ -1699,6 +1791,108 @@ class FourierSimulator:
             'illumination_type': illumination_type,
             'beam_radius': beam_radius
         }
+
+    # ---- 序列（视频）模拟 ----
+    MAX_SEQUENCE_FRAMES = 60
+
+    @staticmethod
+    def run_sequence_simulation(phase_images, illumination_type='uniform',
+                                beam_radius=250, output_width=512, output_height=512,
+                                colormap='magma'):
+        """
+        批量模拟多帧相位图的傅里叶面强度，用于序列（视频）播放
+
+        参数:
+            phase_images: 相位图 base64 列表
+            其余参数与 run_simulation 相同
+        返回:
+            dict: frames 列表，每帧包含彩色/对数/原始强度图与统计信息
+        """
+        illumination = FourierSimulator.build_illumination(
+            illumination_type, output_width, output_height, beam_radius
+        )
+
+        frames = []
+        for index, phase_image_base64 in enumerate(phase_images):
+            gray_array = FourierSimulator.decode_phase_image(
+                phase_image_base64, output_width, output_height
+            )
+            phase = FourierSimulator.gray_to_phase(gray_array)
+            intensity_log, intensity_raw = FourierSimulator.simulate_fourier_intensity(
+                phase, illumination
+            )
+
+            intensity_log_img = (intensity_log * 255).astype(np.uint8)
+            intensity_color_img = FourierSimulator.apply_colormap(
+                intensity_log_img, colormap
+            )
+
+            frames.append({
+                'index': index,
+                'intensity_log': SLMPatternGenerator.array_to_base64(intensity_log_img),
+                'intensity_raw': SLMPatternGenerator.array_to_base64(
+                    (intensity_raw * 255).astype(np.uint8)
+                ),
+                'intensity_color': FourierSimulator._rgb_to_base64(intensity_color_img),
+                'mean_intensity': round(float(np.mean(intensity_raw)), 6),
+                'peak_intensity': round(float(np.max(intensity_raw)), 6),
+            })
+
+        return {
+            'frames': frames,
+            'frame_count': len(frames),
+            'colormap': colormap,
+            'illumination_type': illumination_type,
+            'beam_radius': beam_radius,
+            'output_width': output_width,
+            'output_height': output_height
+        }
+
+    @staticmethod
+    def export_sequence_gif(phase_images, illumination_type='uniform',
+                            beam_radius=250, output_width=512, output_height=512,
+                            colormap='magma', frame_duration_ms=200,
+                            intensity_mode='color'):
+        """
+        将相位图序列的傅里叶面强度模拟结果导出为动画 GIF 字节流
+
+        参数:
+            frame_duration_ms: 每帧显示时长（毫秒）
+            intensity_mode: 'color' 彩色强度 或 'log' 对数灰度
+        """
+        if intensity_mode not in ('color', 'log'):
+            raise ValueError("intensity_mode 必须为 'color' 或 'log'")
+
+        result = FourierSimulator.run_sequence_simulation(
+            phase_images=phase_images,
+            illumination_type=illumination_type,
+            beam_radius=beam_radius,
+            output_width=output_width,
+            output_height=output_height,
+            colormap=colormap
+        )
+
+        key = 'intensity_color' if intensity_mode == 'color' else 'intensity_log'
+        pil_frames = []
+        for frame in result['frames']:
+            image_data = base64.b64decode(frame[key].split(',', 1)[1])
+            img = Image.open(io.BytesIO(image_data))
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            pil_frames.append(img)
+
+        buffer = io.BytesIO()
+        pil_frames[0].save(
+            buffer,
+            format='GIF',
+            save_all=True,
+            append_images=pil_frames[1:],
+            duration=max(20, int(frame_duration_ms)),
+            loop=0,
+            optimize=True
+        )
+        buffer.seek(0)
+        return buffer.getvalue()
 
 
 # ==================== 路由 ====================
@@ -2210,6 +2404,94 @@ def calculate_cgh_api():
         }), 400
 
 
+CGH_SEQUENCE_MAX_FRAMES = 200
+CGH_SEQUENCE_MAX_FRAME_IMAGE_CHARS = 24 * 1024 * 1024
+
+
+@app.route('/api/cgh/sequence/export', methods=['POST'])
+def export_cgh_sequence_zip():
+    """
+    将多帧 CGH 相位图序列导出为 ZIP（8-bit BMP 序列），用于 SLM 软件按帧连续播放
+    请求体:
+    {
+        "frames": ["data:image/png;base64,...", ...],  # 相位图 base64 列表（1~200 帧）
+        "prefix": "可选 ZIP 内文件名前缀，默认 cgh"
+    }
+    """
+    try:
+        data = request.get_json() or {}
+        frames = data.get('frames', [])
+        prefix = data.get('prefix', 'cgh')
+
+        if not isinstance(frames, list) or not frames:
+            return jsonify({
+                'success': False,
+                'error': '请提供相位图帧列表 frames'
+            }), 400
+        if len(frames) > CGH_SEQUENCE_MAX_FRAMES:
+            return jsonify({
+                'success': False,
+                'error': f'序列帧数过多，最多支持 {CGH_SEQUENCE_MAX_FRAMES} 帧'
+            }), 400
+        if not isinstance(prefix, str):
+            return jsonify({'success': False, 'error': 'prefix 必须为字符串'}), 400
+        prefix = ''.join(ch for ch in prefix if ch.isalnum() or ch in '-_').strip('-_') or 'cgh'
+        prefix = prefix[:50]
+
+        decoded_frames = []
+        for index, frame in enumerate(frames):
+            if not isinstance(frame, str) or not frame:
+                return jsonify({
+                    'success': False,
+                    'error': f'第 {index + 1} 帧图像无效'
+                }), 400
+            if len(frame) > CGH_SEQUENCE_MAX_FRAME_IMAGE_CHARS:
+                return jsonify({
+                    'success': False,
+                    'error': f'第 {index + 1} 帧图像过大'
+                }), 400
+            try:
+                img_data = frame.split(',', 1)[1] if ',' in frame else frame
+                img_bytes = base64.b64decode(img_data, validate=True)
+                img = Image.open(io.BytesIO(img_bytes))
+            except Exception:
+                return jsonify({
+                    'success': False,
+                    'error': f'第 {index + 1} 帧不是有效的图像数据'
+                }), 400
+            if img.mode != 'L':
+                img = img.convert('L')
+            decoded_frames.append(img)
+
+        pad = max(3, len(str(len(decoded_frames))))
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', compression=zipfile.ZIP_DEFLATED) as zip_file:
+            for index, img in enumerate(decoded_frames, start=1):
+                frame_buffer = io.BytesIO()
+                img.save(frame_buffer, format='BMP')
+                zip_file.writestr(
+                    f'{prefix}_frame_{str(index).zfill(pad)}.bmp',
+                    frame_buffer.getvalue()
+                )
+
+        zip_buffer.seek(0)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        return send_file(
+            zip_buffer,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=f'{prefix}_sequence_{timestamp}.zip'
+        )
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 400
+
+
 @app.route('/api/convert-to-bmp', methods=['POST'])
 def convert_image_to_bmp():
     """
@@ -2412,6 +2694,119 @@ def simulate_fourier():
         }), 400
 
 
+@app.route('/api/simulate/fourier/sequence', methods=['POST'])
+def simulate_fourier_sequence():
+    """
+    傅里叶面强度序列模拟API：对多帧相位图批量模拟，用于视频播放
+    参数:
+        phase_images: 相位图 base64 列表（必填，1~60 帧）
+        illumination_type / beam_radius / width / height / colormap 与单帧模拟相同
+    """
+    try:
+        data = request.get_json() or {}
+        phase_images = data.get('phase_images', [])
+
+        if not isinstance(phase_images, list) or not phase_images:
+            return jsonify({
+                'success': False,
+                'error': '请提供相位图列表 phase_images'
+            }), 400
+        if len(phase_images) > FourierSimulator.MAX_SEQUENCE_FRAMES:
+            return jsonify({
+                'success': False,
+                'error': f'序列帧数过多，最多支持 {FourierSimulator.MAX_SEQUENCE_FRAMES} 帧'
+            }), 400
+        if any((not isinstance(item, str)) or not item for item in phase_images):
+            return jsonify({
+                'success': False,
+                'error': '相位图列表中包含无效项'
+            }), 400
+
+        result = FourierSimulator.run_sequence_simulation(
+            phase_images=phase_images,
+            illumination_type=data.get('illumination_type', 'uniform'),
+            beam_radius=float(data.get('beam_radius', 250)),
+            output_width=int(data.get('width', 512)),
+            output_height=int(data.get('height', 512)),
+            colormap=data.get('colormap', 'magma')
+        )
+
+        return jsonify({
+            'success': True,
+            'frame_count': result['frame_count'],
+            'frames': result['frames'],
+            'colormap': result['colormap'],
+            'illumination_type': result['illumination_type'],
+            'beam_radius': result['beam_radius'],
+            'message': f"傅里叶面序列模拟完成，共 {result['frame_count']} 帧"
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 400
+
+
+@app.route('/api/simulate/fourier/export-gif', methods=['POST'])
+def export_fourier_sequence_gif():
+    """
+    将傅里叶面序列模拟结果导出为动画 GIF
+    额外参数:
+        frame_duration_ms: 每帧时长（毫秒，默认 200，范围 20~2000）
+        intensity_mode: 'color' 或 'log'（默认 color）
+    """
+    try:
+        data = request.get_json() or {}
+        phase_images = data.get('phase_images', [])
+
+        if not isinstance(phase_images, list) or not phase_images:
+            return jsonify({
+                'success': False,
+                'error': '请提供相位图列表 phase_images'
+            }), 400
+        if len(phase_images) > FourierSimulator.MAX_SEQUENCE_FRAMES:
+            return jsonify({
+                'success': False,
+                'error': f'序列帧数过多，最多支持 {FourierSimulator.MAX_SEQUENCE_FRAMES} 帧'
+            }), 400
+        if any((not isinstance(item, str)) or not item for item in phase_images):
+            return jsonify({
+                'success': False,
+                'error': '相位图列表中包含无效项'
+            }), 400
+
+        frame_duration_ms = min(2000, max(20, int(data.get('frame_duration_ms', 200))))
+
+        gif_bytes = FourierSimulator.export_sequence_gif(
+            phase_images=phase_images,
+            illumination_type=data.get('illumination_type', 'uniform'),
+            beam_radius=float(data.get('beam_radius', 250)),
+            output_width=int(data.get('width', 512)),
+            output_height=int(data.get('height', 512)),
+            colormap=data.get('colormap', 'magma'),
+            frame_duration_ms=frame_duration_ms,
+            intensity_mode=data.get('intensity_mode', 'color')
+        )
+
+        return send_file(
+            io.BytesIO(gif_bytes),
+            mimetype='image/gif',
+            as_attachment=True,
+            download_name=f'fourier_sequence_{datetime.now().strftime("%Y%m%d_%H%M%S")}.gif'
+        )
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 400
+
+
 @app.route('/api/history', methods=['GET'])
 def get_history():
     """获取生成历史"""
@@ -2479,6 +2874,544 @@ def init_default_presets():
             db.session.add(preset)
 
     db.session.commit()
+
+
+# ==================== SLAM 三光斑独立运动 ====================
+SLAM_MOTION_MAX_FRAMES = 200
+SLAM_MOTION_MAX_WAYPOINTS = 256
+# Bound the amount of phase/reconstruction work accepted by one request.  The
+# frame-count limit alone still permits several gigabytes at the largest
+# supported resolution.
+SLAM_MOTION_MAX_ESTIMATED_PIXELS = 450_000_000
+SLAM_MOTION_MAX_COMPLETED_JOBS = 32
+SLAM_MOTION_JOBS = {}
+SLAM_MOTION_JOBS_LOCK = threading.RLock()
+SLAM_MOTION_USB_LOCK = threading.Lock()
+
+
+def _motion_number(value, name, minimum=None, maximum=None):
+    if isinstance(value, bool):
+        raise ValueError(f'{name} 必须是有限数值')
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f'{name} 必须是有限数值') from None
+    if not math.isfinite(number):
+        raise ValueError(f'{name} 必须是有限数值')
+    if minimum is not None and number < minimum:
+        raise ValueError(f'{name} 不能小于 {minimum:g}')
+    if maximum is not None and number > maximum:
+        raise ValueError(f'{name} 不能大于 {maximum:g}')
+    return number
+
+
+def _motion_integer(value, name, minimum=1, maximum=None):
+    number = _motion_number(value, name, minimum, maximum)
+    if not number.is_integer():
+        raise ValueError(f'{name} 必须是整数')
+    return int(number)
+
+
+def _validate_motion_request(payload):
+    if not isinstance(payload, dict):
+        raise ValueError('请求必须是 JSON 对象')
+    calibration = payload.get('calibration')
+    if not isinstance(calibration, dict):
+        raise ValueError('缺少 calibration 标定参数')
+    calibration = {
+        'origin_x_px': _motion_number(calibration.get('origin_x_px'), 'origin_x_px'),
+        'origin_y_px': _motion_number(calibration.get('origin_y_px'), 'origin_y_px'),
+        'pixels_per_um': _motion_number(
+            calibration.get('pixels_per_um'), 'pixels_per_um', 1e-9
+        ),
+        'y_up': calibration.get('y_up', True),
+        'focus_scale_x': _motion_number(
+            calibration.get('focus_scale_x', 1), 'focus_scale_x', 1e-9
+        ),
+        'focus_scale_y': _motion_number(
+            calibration.get('focus_scale_y', 1), 'focus_scale_y', 1e-9
+        ),
+        'rotation_deg': _motion_number(
+            calibration.get('rotation_deg', 0), 'rotation_deg'
+        ),
+        'magnification': _motion_number(
+            calibration.get('magnification', 50), 'magnification', 1e-9
+        ),
+    }
+    if not isinstance(calibration['y_up'], bool):
+        raise ValueError('y_up 必须是布尔值')
+    calibrate_pixel_to_sample_um(
+        calibration['origin_x_px'], calibration['origin_y_px'],
+        calibration['origin_x_px'], calibration['origin_y_px'],
+        calibration['pixels_per_um'], calibration['y_up']
+    )
+    sample_to_focus_um(
+        0, 0, calibration['focus_scale_x'], calibration['focus_scale_y'],
+        calibration['rotation_deg']
+    )
+
+    parameters = payload.get('parameters')
+    if not isinstance(parameters, dict):
+        raise ValueError('缺少 parameters 光学参数')
+    parameters = {
+        'focal_length_um': _motion_number(
+            parameters.get('focal_length_um', 1000), 'focal_length_um', 1
+        ),
+        'wavelength_nm': _motion_number(
+            parameters.get('wavelength_nm', 532), 'wavelength_nm', 1
+        ),
+        'magnification': _motion_number(
+            parameters.get('magnification', calibration['magnification']),
+            'magnification', 1e-9
+        ),
+        'algorithm': str(parameters.get('algorithm', 'gaussian_wgs')),
+        'phase_direction': str(parameters.get('phase_direction', 'standard')),
+        'incident_beam_diameter_mm': _motion_number(
+            parameters.get('incident_beam_diameter_mm', 6),
+            'incident_beam_diameter_mm', 1e-9
+        ),
+        'spot_diameter_um': _motion_number(
+            parameters.get('spot_diameter_um', 6), 'spot_diameter_um', 5, 8
+        ),
+        'width': _motion_integer(parameters.get('width', 1272), 'width', 64, 4096),
+        'height': _motion_integer(parameters.get('height', 1024), 'height', 64, 4096),
+        'speed_um_s': _motion_number(
+            parameters.get('speed_um_s', 2), 'speed_um_s', 1e-9
+        ),
+        'frame_interval_ms': _motion_integer(
+            parameters.get('frame_interval_ms', 200),
+            'frame_interval_ms', 1, 3600000
+        ),
+        'iterations': _motion_integer(
+            parameters.get('iterations', 30), 'iterations', 1, 200
+        ),
+        'output_width': _motion_integer(
+            parameters.get('output_width', 512), 'output_width', 64, 2048
+        ),
+        'output_height': _motion_integer(
+            parameters.get('output_height', 512), 'output_height', 64, 2048
+        ),
+    }
+    if parameters['algorithm'] not in (
+        'uniform_grating', 'gaussian_wgs', 'dammann', 'analytic'
+    ):
+        raise ValueError('不支持的三光斑生成算法')
+    if parameters['phase_direction'] not in ('standard', 'inverted'):
+        raise ValueError('phase_direction 必须是 standard 或 inverted')
+
+    paths = payload.get('paths')
+    if not isinstance(paths, list) or len(paths) != 3:
+        raise ValueError('paths 必须包含三个独立光斑路径')
+    for index, path in enumerate(paths):
+        if not isinstance(path, dict):
+            raise ValueError(f'第 {index + 1} 条路径格式无效')
+        waypoints = path.get('waypoints')
+        if not isinstance(waypoints, list) or len(waypoints) > SLAM_MOTION_MAX_WAYPOINTS:
+            raise ValueError(
+                f'第 {index + 1} 条路径 waypoint 数量须在 1 到 '
+                f'{SLAM_MOTION_MAX_WAYPOINTS} 之间'
+            )
+
+    frames = plan_motion_frames(
+        paths,
+        speed_um_s=parameters['speed_um_s'],
+        frame_interval_ms=parameters['frame_interval_ms'],
+        max_frames=SLAM_MOTION_MAX_FRAMES
+    )
+    minimum_spacing = parameters['spot_diameter_um']
+    validate_minimum_spacing(frames, minimum_spacing)
+    estimated_pixels = len(frames) * (
+        parameters['width'] * parameters['height'] +
+        parameters['output_width'] * parameters['output_height']
+    )
+    if estimated_pixels > SLAM_MOTION_MAX_ESTIMATED_PIXELS:
+        raise ValueError(
+            f'运动任务预计处理像素量 {estimated_pixels} 超过上限 '
+            f'{SLAM_MOTION_MAX_ESTIMATED_PIXELS}'
+        )
+
+    focal_length_mm = parameters['focal_length_um'] / 1000
+    wavelength_mm = parameters['wavelength_nm'] / 1e6
+    pixel_size_mm = 12.5 / 1000
+    half_width_um = (
+        wavelength_mm * focal_length_mm / (2 * pixel_size_mm) * 1000
+    )
+    half_height_um = half_width_um * parameters['height'] / parameters['width']
+    margin_um = (
+        2.5 * parameters['spot_diameter_um'] / 2
+        if parameters['algorithm'] == 'gaussian_wgs' else 0
+    )
+    for frame in frames:
+        points = sorted(frame['spots'], key=lambda spot: spot['x_um'])
+        for spot in frame['spots']:
+            if abs(spot['x_um']) + margin_um >= half_width_um or \
+                    abs(spot['y_um']) + margin_um >= half_height_um:
+                raise ValueError(
+                    '光斑坐标超出当前 SLM 分辨率与焦距的生成视场'
+                )
+        if parameters['algorithm'] == 'dammann':
+            dx1 = points[1]['x_um'] - points[0]['x_um']
+            dx2 = points[2]['x_um'] - points[1]['x_um']
+            tolerance = max(abs(dx1), abs(dx2), 1) * 1e-6
+            if dx1 <= 0 or abs(dx1 - dx2) > tolerance or any(
+                abs(spot['y_um'] - points[0]['y_um']) > tolerance
+                for spot in points[1:]
+            ):
+                raise ValueError(
+                    '1×3 达曼光栅要求全路径保持水平、等间距的三点结构'
+                )
+
+    return calibration, parameters, paths, frames
+
+
+def _motion_job_status(job):
+    frame_urls = []
+    for frame in job['generated_frames']:
+        index = frame['index']
+        frame_urls.append({
+            **frame,
+            'phase_url': f"/api/slam/motion/jobs/{job['id']}/frames/{index}/phase",
+            'reconstruction_url': (
+                f"/api/slam/motion/jobs/{job['id']}/frames/{index}/reconstruction"
+            ),
+        })
+    return {
+        'success': True,
+        'job_id': job['id'],
+        'status': job['status'],
+        'frame_count': len(job['plan']),
+        'generated_count': len(job['generated_frames']),
+        'progress': round(100 * len(job['generated_frames']) / len(job['plan'])),
+        'frames': frame_urls,
+        'error': job.get('error'),
+        'output_path': job.get('output_path'),
+        'export_url': (
+            f"/api/slam/motion/jobs/{job['id']}/export.zip"
+            if job['status'] == 'complete' else None
+        ),
+    }
+
+
+@app.route('/api/slam/motion/jobs', methods=['POST'])
+def create_slam_motion_job():
+    try:
+        payload = request.get_json(silent=True) or {}
+        calibration, parameters, paths, frames = _validate_motion_request(payload)
+        with SLAM_MOTION_JOBS_LOCK:
+            active = sum(
+                job['status'] in ('planned', 'running')
+                for job in SLAM_MOTION_JOBS.values()
+            )
+            if active >= 4:
+                return jsonify({
+                    'success': False,
+                    'error': '当前已有 4 个运动任务，请完成或关闭后再试'
+                }), 409
+            completed = sum(
+                job['status'] == 'complete'
+                for job in SLAM_MOTION_JOBS.values()
+            )
+            if completed >= SLAM_MOTION_MAX_COMPLETED_JOBS:
+                return jsonify({
+                    'success': False,
+                    'error': '已完成运动任务数量达到上限，请清理旧任务输出后再试'
+                }), 409
+
+            job_id = uuid.uuid4().hex
+            date_folder = datetime.now().strftime('%Y%m%d')
+            date_root = os.path.join(LINGO_OUTPUT_DIR, date_folder)
+            os.makedirs(date_root, exist_ok=True)
+            staging_dir = os.path.join(date_root, f'.{job_id}.tmp')
+            final_dir = os.path.join(date_root, job_id)
+            os.makedirs(staging_dir, exist_ok=False)
+            job = {
+                'id': job_id,
+                'status': 'planned',
+                'plan': frames,
+                'paths': paths,
+                'calibration': calibration,
+                'parameters': parameters,
+                'generated_frames': [],
+                'next_index': 0,
+                'staging_dir': staging_dir,
+                'final_dir': final_dir,
+                'directory': staging_dir,
+                'output_path': os.path.join('output', 'Lingo', date_folder, job_id),
+                'lock': threading.Lock(),
+                'error': None,
+            }
+            SLAM_MOTION_JOBS[job_id] = job
+        response = _motion_job_status(job)
+        return jsonify(response), 202
+    except (TypeError, ValueError, OSError) as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
+
+@app.route('/api/slam/motion/jobs/<job_id>', methods=['GET'])
+def get_slam_motion_job(job_id):
+    with SLAM_MOTION_JOBS_LOCK:
+        job = SLAM_MOTION_JOBS.get(job_id)
+    if job is None:
+        return jsonify({'success': False, 'error': '运动任务不存在'}), 404
+    return jsonify(_motion_job_status(job))
+
+
+@app.route('/api/slam/motion/jobs/<job_id>/next', methods=['POST'])
+def generate_next_slam_motion_frame(job_id):
+    with SLAM_MOTION_JOBS_LOCK:
+        job = SLAM_MOTION_JOBS.get(job_id)
+    if job is None:
+        return jsonify({'success': False, 'error': '运动任务不存在'}), 404
+
+    with job['lock']:
+        if job['status'] == 'complete':
+            return jsonify(_motion_job_status(job)), 409
+        if job['status'] == 'failed':
+            return jsonify(_motion_job_status(job)), 409
+        frame_index = job['next_index']
+        if frame_index >= len(job['plan']):
+            return jsonify({'success': False, 'error': '运动任务状态无效'}), 409
+        job['status'] = 'running'
+        frame = job['plan'][frame_index]
+        parameters = job['parameters']
+        target_spots = [
+            {
+                'x_mm': spot['x_um'] / 1000,
+                'y_mm': spot['y_um'] / 1000,
+                'weight': 1.0,
+            }
+            for spot in frame['spots']
+        ]
+        try:
+            phase_array = SLMPatternGenerator.fresnel_three_spots(
+                width=parameters['width'],
+                height=parameters['height'],
+                focal_length=parameters['focal_length_um'] / 1000,
+                wavelength=parameters['wavelength_nm'],
+                spot_count=3,
+                spot_spacing=1.0,
+                pixel_size_um=12.5,
+                algorithm=parameters['algorithm'],
+                incident_beam_diameter_mm=parameters['incident_beam_diameter_mm'],
+                iterations=parameters['iterations'],
+                phase_direction=parameters['phase_direction'],
+                spot_radius_mm=parameters['spot_diameter_um'] / 2000,
+                target_spots=target_spots,
+            )
+            phase_path = os.path.join(
+                job['staging_dir'], f"phase_{frame_index + 1:04d}.bmp"
+            )
+            Image.fromarray(phase_array, mode='L').save(phase_path, format='BMP')
+            phase_data = SLMPatternGenerator.array_to_base64(phase_array)
+            simulation = FourierSimulator.run_simulation(
+                phase_data,
+                illumination_type='uniform',
+                output_width=parameters['output_width'],
+                output_height=parameters['output_height'],
+                colormap='magma'
+            )
+            reconstruction_data = simulation['intensity_color'].split(',', 1)[1]
+            reconstruction_bytes = base64.b64decode(reconstruction_data, validate=True)
+            reconstruction_path = os.path.join(
+                job['staging_dir'], f"reconstruction_{frame_index + 1:04d}.png"
+            )
+            with open(reconstruction_path, 'wb') as output_file:
+                output_file.write(reconstruction_bytes)
+
+            generated = {
+                'index': frame_index,
+                'time_s': frame['time_s'],
+                'duration_ms': frame['duration_ms'],
+                'spots': frame['spots'],
+                'phase_file': os.path.basename(phase_path),
+                'reconstruction_file': os.path.basename(reconstruction_path),
+            }
+            job['generated_frames'].append(generated)
+            job['next_index'] += 1
+            if job['next_index'] == len(job['plan']):
+                manifest = {
+                    'job_id': job['id'],
+                    'calibration': job['calibration'],
+                    'parameters': parameters,
+                    'paths': job['paths'],
+                    'frames': job['generated_frames'],
+                }
+                manifest_path = os.path.join(job['staging_dir'], 'manifest.json')
+                with open(manifest_path, 'w', encoding='utf-8') as manifest_file:
+                    json.dump(manifest, manifest_file, ensure_ascii=False, allow_nan=False)
+                os.replace(job['staging_dir'], job['final_dir'])
+                job['directory'] = job['final_dir']
+                job['status'] = 'complete'
+            response = _motion_job_status(job)
+            response.update({
+                'index': frame_index,
+                'completed_frames': job['next_index'],
+                'complete': job['status'] == 'complete',
+            })
+            return jsonify(response)
+        except Exception as exc:  # noqa: BLE001
+            job['status'] = 'failed'
+            job['error'] = str(exc)
+            shutil.rmtree(job['staging_dir'], ignore_errors=True)
+            return jsonify(_motion_job_status(job)), 422
+
+
+def _motion_frame_path(job, index, kind):
+    if job['status'] != 'complete' or not 0 <= index < len(job['generated_frames']):
+        return None
+    file_key = 'phase_file' if kind == 'phase' else 'reconstruction_file'
+    return os.path.join(job['directory'], job['generated_frames'][index][file_key])
+
+
+@app.route('/api/slam/motion/jobs/<job_id>/frames/<int:index>/phase', methods=['GET'])
+def get_slam_motion_phase_frame(job_id, index):
+    with SLAM_MOTION_JOBS_LOCK:
+        job = SLAM_MOTION_JOBS.get(job_id)
+    path = _motion_frame_path(job, index, 'phase') if job else None
+    if path is None or not os.path.isfile(path):
+        return jsonify({'success': False, 'error': '相位帧不存在'}), 404
+    return send_file(path, mimetype='image/bmp', conditional=True)
+
+
+@app.route('/api/slam/motion/jobs/<job_id>/frames/<int:index>/reconstruction', methods=['GET'])
+def get_slam_motion_reconstruction_frame(job_id, index):
+    with SLAM_MOTION_JOBS_LOCK:
+        job = SLAM_MOTION_JOBS.get(job_id)
+    path = _motion_frame_path(job, index, 'reconstruction') if job else None
+    if path is None or not os.path.isfile(path):
+        return jsonify({'success': False, 'error': '重建帧不存在'}), 404
+    return send_file(path, mimetype='image/png', conditional=True)
+
+
+@app.route('/api/slam/motion/jobs/<job_id>/export.zip', methods=['GET'])
+def export_slam_motion_job(job_id):
+    with SLAM_MOTION_JOBS_LOCK:
+        job = SLAM_MOTION_JOBS.get(job_id)
+    if job is None:
+        return jsonify({'success': False, 'error': '运动任务不存在'}), 404
+    with job['lock']:
+        if job['status'] != 'complete':
+            return jsonify({'success': False, 'error': '运动任务尚未完整生成'}), 409
+        zip_path = os.path.join(job['directory'], 'phase_sequence.zip')
+        if not os.path.isfile(zip_path):
+            temporary_zip = os.path.join(
+                job['directory'], f'.phase_sequence.{uuid.uuid4().hex}.tmp'
+            )
+            try:
+                with zipfile.ZipFile(
+                    temporary_zip, 'w', compression=zipfile.ZIP_STORED
+                ) as archive:
+                    for frame in job['generated_frames']:
+                        archive.write(
+                            os.path.join(job['directory'], frame['phase_file']),
+                            arcname=frame['phase_file']
+                        )
+                    archive.write(
+                        os.path.join(job['directory'], 'manifest.json'),
+                        arcname='manifest.json'
+                    )
+                os.replace(temporary_zip, zip_path)
+            finally:
+                if os.path.exists(temporary_zip):
+                    os.remove(temporary_zip)
+    return send_file(
+        zip_path,
+        mimetype='application/zip',
+        as_attachment=True,
+        download_name=f"slam_motion_{job_id}.zip",
+        conditional=True
+    )
+
+
+@app.route('/api/usb_slm/motion/upload', methods=['POST'])
+def upload_slam_motion_job_to_usb_slm():
+    from usb_slm_control import (
+        SLMDriverError,
+        SLMSequenceUploadError,
+        USB_SLMController,
+        X_PIXEL,
+        Y_PIXEL,
+    )
+
+    data = request.get_json(silent=True) or {}
+    with SLAM_MOTION_JOBS_LOCK:
+        job = SLAM_MOTION_JOBS.get(str(data.get('job_id', '')))
+    if job is None:
+        return jsonify({'success': False, 'error': '运动任务不存在'}), 404
+    if job['status'] != 'complete':
+        return jsonify({'success': False, 'error': '运动任务尚未完整生成'}), 409
+    if data.get('overwrite_confirmed') is not True:
+        return jsonify({'success': False, 'error': '覆盖 FMem 槽位前必须确认'}), 400
+    try:
+        parameters = job['parameters']
+        if (parameters['width'], parameters['height']) != (X_PIXEL, Y_PIXEL):
+            raise ValueError('USB_SLMControl 只接受 1272×1024 相位帧')
+        start_slot = _motion_integer(data.get('start_slot'), 'start_slot', 0, 818)
+        frame_count = len(job['generated_frames'])
+        if start_slot + frame_count > 819:
+            raise ValueError('相位帧数量超出可用 FMem 槽位范围 0–818')
+        prepared_frames = []
+        steps = []
+        for offset, frame in enumerate(job['generated_frames']):
+            phase_path = os.path.join(job['directory'], frame['phase_file'])
+            if not os.path.isfile(phase_path):
+                raise ValueError(f"第 {offset + 1} 帧相位文件不存在")
+            with Image.open(phase_path) as source:
+                phase_image = source.convert('L')
+            if phase_image.size != (X_PIXEL, Y_PIXEL):
+                raise ValueError(f"第 {offset + 1} 帧尺寸不符合 1272×1024")
+            prepared_frames.append(phase_image.tobytes())
+            steps.append({
+                'slot': start_slot + offset,
+                'duration_ms': frame['duration_ms'],
+            })
+
+        controller = USB_SLMController.instance()
+        with SLAM_MOTION_USB_LOCK:
+            transaction = controller.write_fmem_sequence(
+                prepared_frames,
+                steps,
+                loop=bool(data.get('loop', True)),
+                require_real=True,
+            )
+        return jsonify({
+            'success': True,
+            'uploaded_count': transaction['uploaded_count'],
+            'uploaded_frames': transaction['uploaded_count'],
+            'start_slot': start_slot,
+            'end_slot': start_slot + transaction['uploaded_count'] - 1,
+            'driver': controller.driver_name,
+            'sequence_started': True,
+            'sequence': transaction['sequence'],
+            'message': '相位帧已写入真实 SLM 并启动序列播放',
+        })
+    except (TypeError, ValueError) as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    except SLMSequenceUploadError as exc:
+        return jsonify({
+            'success': False,
+            'error': str(exc),
+            'uploaded_count': exc.uploaded_count,
+            'uploaded_frames': exc.uploaded_count,
+            'restore_failed_slots': exc.restore_failed_slots,
+            'sequence_started': False,
+        }), 409
+    except SLMDriverError as exc:
+        return jsonify({
+            'success': False,
+            'error': str(exc),
+            'uploaded_count': 0,
+            'uploaded_frames': 0,
+            'sequence_started': False,
+        }), 409
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({
+            'success': False,
+            'error': f'USB 序列上传失败: {exc}',
+            'uploaded_count': 0,
+            'uploaded_frames': 0,
+            'sequence_started': False,
+        }), 409
 
 
 # ==================== 主程序 ====================

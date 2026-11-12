@@ -78,6 +78,26 @@ P0 全部通过 + 0 控制台错误 + 0 失败请求 → **核心链路健康**�
 - python -B -m unittest discover -s . -p test_*.py -v：29 项通过。
 - Node 回归：18 个图像头检查、项目 v1/v2 往返、历史参数恢复、5 个光斑阵列校验、4 个 CGH handoff 和 6 个导航检查均通过；三份前端脚本 node --check 通过。
 - 测试启动器在建表前断言实际 SQLite 路径和输出目录均位于临时目录内；本次未使用默认用户数据库。
+
+## 2026-11-11 单窗口导航改造（v2.1）
+
+需求：删除"快速导航"中每个模块窗口的"折叠"功能，每个模块改为独立窗口显示，不再通过下滑滚动访问模块。
+
+### 代码变更
+
+- [index_pro.html](file:///f:/0_My_jupyter/2_Optics/SLMJomo/SLMJomo/web_app/templates/index_pro.html)：删除 15 个"折叠/展开"按钮；移除全部 `.collapsed` 初始态；快速导航 16 项由 `scrollToSection` 改为 `showModule`；fresnel 默认携带 `module-active`。
+- [pro_main.js](file:///f:/0_My_jupyter/2_Optics/SLMJomo/SLMJomo/web_app/static/js/pro_main.js)：删除 `toggleModule()` 与 `scrollToSection()`；新增 `showModule(moduleId)`（单窗口互斥显隐 + 导航高亮 + 工作区回顶）；`switchTab`/`returnToMain`/`applyPreset` 同步切换调用。
+- [pro_style.css](file:///f:/0_My_jupyter/2_Optics/SLMJomo/SLMJomo/web_app/static/css/pro_style.css)：删除 `.module-card.collapsed` 与 `.toggle-icon` 规则；新增 `.workspace > .module-card { display:none }` + `.module-active { display:block }`；移除 `.module-header` 的 `cursor:pointer`（不再有点击折叠语义）。
+
+### 回归结果
+
+- `node --check static/js/pro_main.js`：通过。
+- `node test_top_navigation.cjs`：6 项通过（含"切换后 sequence-panel 唯一可见、fresnel 隐藏"新断言）。
+- `python -B -m unittest test_app_routes test_fresnel_spot_array test_fresnel_three_spots`：29 项通过。
+- `python -B browser_workflow_test.py`：通过。新增断言：页面无 `title='折叠/展开'` 按钮；加载后仅 fresnel 可见；各模块操作前经快速导航/顶部菜单切换并断言唯一可见（double-ring、fresnel-three-spots、cgh-simulation、sequence-panel、bmp-converter、fourier-sim）。13 项检查、0 控制台错误、0 失败请求。
+- `python -B ui_demo_v2.py`：P0 全步骤通过（P0-8 前先切回 fresnel 窗口再模拟设备连接）。
+- 实机验证（127.0.0.1:5000）：加载仅显示菲涅尔窗口；点击"涡旋光束"/"CGH Simulation"单窗口切换且导航高亮；全页无折叠按钮。
+- 已知边界：`ui_demo_quick.py` / `ui_demo_record.py` 为 v1 历史证据，其 `scrollToSection`/`toggleModule` 选择器已不适用于当前 UI，保留不修改。
 - 同一套 Python 和 Playwright 回归又在干净临时虚拟环境中通过，解析目标为 Windows x64 / CPython 3.12。
 
 ## 2026-11-11 P0 演示回归

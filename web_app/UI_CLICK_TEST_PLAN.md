@@ -16,9 +16,11 @@ LCOS-SLM（空间光调制器）相位图生成与控制工作台：在浏览器
 - 输出：`output_phase_patterns/` 下 BMP 文件；预览以 base64 回传前端。
 - 前端：`templates/index_pro.html` 单页 + `static/js/pro_main.js`，全部交互为 onclick 驱动。
 
-### 1.3 页面结构（16 个 section）
+### 1.3 页面结构（单窗口视图 + 17 个 section）
 
-顶栏（设备状态 + 连接设备）｜左侧栏（快速导航 15 项 + 工作流按钮 + 最近使用）｜中央 15 个图案/工具模块卡片（默认展开：fresnel、double-ring、cgh-simulation；其余折叠）｜右侧预览栏｜底部序列面板。
+顶栏（设备状态 + 连接设备）｜左侧栏（快速导航 16 项 + 工作流按钮 + 参数预设 + 最近使用）｜中央工作区（同一时刻仅显示 1 个模块窗口，默认 fresnel；点击快速导航或顶部菜单切换独立视图，无折叠功能）｜右侧预览栏。
+
+> v2.1 变更：模块卡片不再堆叠滚动，删除了所有"折叠/展开"按钮（`toggleModule`/`.collapsed` 已移除）；快速导航从 `scrollToSection` 滚动定位改为 `showModule` 单窗口切换。
 
 ### 1.4 后端 API 与 UI 模块对应
 
@@ -48,17 +50,16 @@ LCOS-SLM（空间光调制器）相位图生成与控制工作台：在浏览器
 
 | 元素 | 选择器 | 点击行为 |
 |---|---|---|
-| 顶部菜单 | `.menu-item` | 首页 / 图案库到 `#fresnel`，序列到 `#sequence-panel`，绘图板到 `#paint-board`；校正 / 设置保持禁用并提示未实现 |
-| 左侧导航项（15 项） | `li[onclick="scrollToSection('<section-id>')"]` | 滚动到模块并高亮 |
-| 模块折叠/展开 | `#<section-id> button[onclick="toggleModule('<section-id>')"]` | 切换 `.collapsed` |
+| 顶部菜单 | `.menu-item` | 首页 / 图案库切到 fresnel 窗口，序列切到 `#sequence-panel`，绘图板切到 `#paint-board`；校正 / 设置保持禁用并提示未实现 |
+| 左侧导航项（16 项） | `li[onclick="showModule('<section-id>')"]` | 切换到该模块独立窗口并高亮（工作区仅显示该模块） |
 | 模块重置 | `button[onclick="resetModule('<section-id>')"]` | 恢复默认参数 |
 | 连接设备 | `button[onclick='connectDevice()']` | 模拟连接（前端状态） |
 | 显示到 SLM | `button[onclick='showOnSLM()']` | 模拟发送 |
 | 工作流按钮 | `button[onclick="startWorkflow('new|open|save')"]` | 新建确认；JSON 项目保存/打开 |
 
-顶部菜单回归：依次点击首页、图案库、序列和绘图板，目标区块应滚入中央工作区且对应菜单高亮；校正和设置应保持不高亮并显示“尚未实现”提示。
+顶部菜单回归：依次点击首页、图案库、序列和绘图板，工作区应切换为对应独立模块窗口且对应菜单高亮；校正和设置应保持不高亮并显示“尚未实现”提示。
 
-### 2.2 菲涅尔透镜（默认展开，核心路径）
+### 2.2 菲涅尔透镜（默认显示窗口，核心路径）
 
 | 元素 | 选择器 | 说明 |
 |---|---|---|
@@ -108,10 +109,10 @@ LCOS-SLM（空间光调制器）相位图生成与控制工作台：在浏览器
 
 | ID | 步骤（点击序列） | 预期 |
 |---|---|---|
-| P0-1 | 打开 `/` | 200；顶部状态栏、侧栏 15 项导航、fresnel/double-ring/cgh 默认展开可见；console 无 error |
+| P0-1 | 打开 `/` | 200；顶部状态栏、侧栏 16 项导航；工作区仅显示 fresnel 模块窗口，页面无“折叠/展开”按钮；console 无 error |
 | P0-2 | 点 `button[data-wl='633']` → `#focus_mm` 填 800 → `#x_pixels/#y_pixels` 填 512 → 点生成 | 请求 success；`#phase_image` 显示 base64；下载按钮启用；历史+1；参数摘要更新 |
 | P0-3 | 点 `addToSequence()` | `#sequence_list` 新增条目（含模块名与参数摘要） |
-| P0-4 | 导航至 vortex → 展开模块 → `#vortex_lnumber` 填 2 → 尺寸 256 → 生成 → 加入序列 | 相位图更新；序列第 2 条出现 |
+| P0-4 | 导航至 vortex（单窗口切换）→ `#vortex_lnumber` 填 2 → 尺寸 256 → 生成 → 加入序列 | 涡旋模块成为唯一可见窗口且导航高亮；相位图更新；序列第 2 条出现 |
 | P0-5 | `#play_interval` 填 300 → 播放 → 暂停 → 停止 | 播放时 pause_btn 启用；暂停保留索引；停止后恢复初始按钮态 |
 | P0-6 | BMP：`#converter_input_image` 上传 JPG → 尺寸 512x512 → 灰度"是" → 转换 | `#converter_output_img` 显示；`#converter_download_btn` 启用；服务端产出 8-bit BMP |
 | P0-7 | Fourier：`useCurrentPhaseForFourier()` → 照明选 gaussian（半径输入框出现）→ 256x256 → 开始模拟 | 四张结果图有 src；色图标签与选择一致；`#fourier_download_btn` 启用 |
@@ -123,7 +124,7 @@ LCOS-SLM（空间光调制器）相位图生成与控制工作台：在浏览器
 |---|---|---|
 | P1-01 | fresnel_three_spots | 生成返回 base64；预览更新 |
 | P1-02 | three_spots | 同上 |
-| P1-03 | double-ring | 页面自动生成后目标图、相位图、重建图三张均有图像且可见；手动生成后下载按钮启用 |
+| P1-03 | double-ring | 导航切换到 double-ring 窗口后，自动生成的目标图、相位图、重建图三张均可见；手动生成后下载按钮启用 |
 | P1-04 | axicon | 生成成功，预览为环形结构 |
 | P1-05 | cylindrical | 生成成功；诊断值渲染（标注"非实测"） |
 | P1-06 | blaze / sine | 周期 16：条纹方向符合参数 |
@@ -151,7 +152,7 @@ LCOS-SLM（空间光调制器）相位图生成与控制工作台：在浏览器
 
 ## 4. 执行方式
 
-1. **隔离浏览器回归**：先安装 `requirements-test.txt` 和 Playwright Chromium，再运行 `python browser_workflow_test.py`。脚本自行启动临时 SQLite、临时输出目录和随机本地端口，覆盖预设、生成/历史、预览缩放、BMP 转换、Fourier、CGH、项目完整往返、自定义光斑阵列、循环序列停止、快速重复提交、390px 布局、双环预览和 console/page/network 错误。
+1. **隔离浏览器回归**：先安装 `requirements-test.txt` 和 Playwright Chromium，再运行 `python browser_workflow_test.py`。脚本自行启动临时 SQLite、临时输出目录和随机本地端口，覆盖预设、单窗口导航切换（快速导航 + 顶部菜单、无折叠按钮断言）、生成/历史、预览缩放、BMP 转换、Fourier、CGH、项目完整往返、自定义光斑阵列、循环序列停止、快速重复提交、390px 布局、双环预览和 console/page/network 错误。
 2. **P0 演示录制**：运行 `python ui_demo_v2.py`（Playwright Chromium headless，1280×800）。脚本也会自行启动隔离服务；截图、WebM 视频和 JSON 结果写入一个临时输出目录，并在结果中打印目录路径。
 3. **视频产物**：WebM 可用 ffmpeg 转码为 H.264 MP4。
 4. **人工补充**：P1/P2 用例按第 2 节选择器速查表补充验证。

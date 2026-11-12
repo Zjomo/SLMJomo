@@ -3,7 +3,9 @@
 import json
 from pathlib import Path
 import sys
+import tempfile
 
+from PIL import Image
 from playwright.sync_api import sync_playwright
 
 from browser_test_support import isolated_app_server
@@ -31,7 +33,37 @@ def run_browser_regression():
                 "converterOutput: document.querySelector('#converter_output_info')?.textContent, "
                 "fourierInput: document.querySelector('#fourier_input_status')?.textContent})"
             )
-            raise AssertionError(f'{name}: {error}; browser state={state}') from error
+            raise AssertionError(
+                f'{name}: {error}; browser state={state}; '
+                f'console_errors={console_errors}; page_errors={page_errors}; '
+                f'failed_requests={failed_requests}; bad_responses={bad_responses}'
+            ) from error
+
+    def goto_module(page, module_id):
+        """Switch to a module via the sidebar quick navigation (single-window view)."""
+        page.locator(f".nav-list li[onclick=\"showModule('{module_id}')\"]").click()
+        page.wait_for_function(
+            "id => document.getElementById(id)?.classList.contains('module-active')",
+            arg=module_id
+        )
+
+    def goto_module_via_menu(page, module_id):
+        """Switch to a module via the top menu bar."""
+        page.locator(f".menu-item[href='#{module_id}']").click()
+        page.wait_for_function(
+            "id => document.getElementById(id)?.classList.contains('module-active')",
+            arg=module_id
+        )
+
+    def assert_single_module_visible(page, module_id):
+        visible_ids = page.evaluate("""() => {
+            return [...document.querySelectorAll('.workspace > .module-card')]
+                .filter(card => getComputedStyle(card).display !== 'none')
+                .map(card => card.id);
+        }""")
+        assert visible_ids == [module_id], (
+            f'Expected only {module_id} visible, got {visible_ids}'
+        )
 
     with isolated_app_server() as (base_url, temporary_root):
         with sync_playwright() as playwright:
@@ -62,6 +94,10 @@ def run_browser_regression():
             )
             page.goto(base_url, wait_until='networkidle')
             page.locator('#preset_list .preset-entry').first.wait_for()
+            assert page.locator("button[title='折叠/展开']").count() == 0, (
+                'collapse buttons should be removed from every module'
+            )
+            assert_single_module_visible(page, 'fresnel')
             source_image = Path(__file__).with_name(
                 '51b2910d476a104e754dc08e7efcfd1e.jpg'
             )
@@ -75,6 +111,8 @@ def run_browser_regression():
             mobile_width = page.evaluate('document.documentElement.scrollWidth')
             assert mobile_width <= 390, f'390px viewport overflows to {mobile_width}px'
             page.set_viewport_size({'width': 1280, 'height': 900})
+            goto_module(page, 'double-ring')
+            assert_single_module_visible(page, 'double-ring')
             double_ring_images = (
                 '#double_ring_target_image',
                 '#double_ring_phase_image',
@@ -88,6 +126,7 @@ def run_browser_regression():
             for selector in double_ring_images:
                 assert page.locator(selector).is_visible(), f'{selector} is not visible after generation'
 
+            goto_module(page, 'fresnel')
             page.locator('#focus_mm').fill('1450')
             page.locator('#wavelength_nm').fill('633')
             page.locator('#x_pixels').fill('128')
@@ -142,9 +181,8 @@ def run_browser_regression():
             page.locator('.preview-tools button').nth(2).click()
             assert preview_image.evaluate('(image) => image.style.transform') == 'scale(1)'
 
-            page.locator(
-                "#fresnel-three-spots button[onclick=\"toggleModule('fresnel-three-spots')\"]"
-            ).click()
+            goto_module(page, 'fresnel-three-spots')
+            assert_single_module_visible(page, 'fresnel-three-spots')
             page.locator("button[onclick='addArraySpot()']").click()
             page.locator('#three_spot_weight').fill('1.7')
             page.locator('#three_spot_weight').press('Tab')
@@ -154,9 +192,12 @@ def run_browser_regression():
                 "&& getSpotArrayProjectState().spots[3].weight === 1.7"
             )
 
+            goto_module(page, 'fresnel')
             page.locator('#fresnel button[onclick="addToSequence()"]').click()
             assert page.locator('#sequence_list .sequence-item').count() == 1
 
+            goto_module(page, 'cgh-simulation')
+            assert_single_module_visible(page, 'cgh-simulation')
             page.locator('#cgh_input_image').set_input_files(str(source_image))
             page.locator('#cgh_repetition').fill('1')
             page.locator('#cgh_width').fill('64')
@@ -189,14 +230,20 @@ def run_browser_regression():
             assert saved_project['cgh']['light_shape_image'].startswith('data:image/')
             assert saved_project['cgh']['target_label'] == source_image.name
 
+            goto_module(page, 'fresnel')
             page.locator('#focus_mm').fill('800')
+            goto_module(page, 'fresnel-three-spots')
             page.locator('#three_spot_weight').fill('2.3')
+            goto_module(page, 'cgh-simulation')
             page.locator('#cgh_repetition').fill('2')
             page.locator('#cgh_light_shape').select_option('gaussian')
             page.locator('#cgh_target_path').fill('replacement-target.jpg')
+            goto_module(page, 'fresnel')
             page.locator('#input_image').evaluate('(input) => input.value = ""')
             page.locator("button[onclick='removeImage()']").click()
+            goto_module_via_menu(page, 'sequence-panel')
             page.locator('#sequence_list .btn-remove-seq').click()
+            goto_module(page, 'fresnel')
             page.evaluate("""() => {
                 AppState.cghData = {
                     targetImage: null,
@@ -252,6 +299,8 @@ def run_browser_regression():
 
             page.evaluate('addToSequence()')
             assert page.locator('#sequence_list .sequence-item').count() == 2
+            goto_module_via_menu(page, 'sequence-panel')
+            assert_single_module_visible(page, 'sequence-panel')
             page.locator('#play_interval').fill('100')
             page.locator('#loop_play').check()
             page.evaluate("""() => {
@@ -273,7 +322,8 @@ def run_browser_regression():
             assert not page.locator('#play_btn').is_disabled()
             assert page.locator('#pause_btn').is_disabled()
 
-            page.locator('#bmp-converter .module-header .btn-icon').first.click()
+            goto_module(page, 'bmp-converter')
+            assert_single_module_visible(page, 'bmp-converter')
             page.locator('#converter_input_image').set_input_files(str(source_image))
             wait_for_state(page, 'converter image upload',
                 "document.querySelector('#converter_image_preview')?.style.display === 'block' "
@@ -289,7 +339,8 @@ def run_browser_regression():
             assert '64×64' in page.locator('#converter_output_info').inner_text()
             assert '8-bit' in page.locator('#converter_output_info').inner_text()
 
-            page.locator('#fourier-sim .module-header .btn-icon').first.click()
+            goto_module(page, 'fourier-sim')
+            assert_single_module_visible(page, 'fourier-sim')
             page.locator('#fourier_upload_input').set_input_files(str(source_image))
             page.wait_for_function(
                 "document.querySelector('#fourier_input_status')?.textContent.includes('已上传')"
@@ -311,6 +362,74 @@ def run_browser_regression():
             assert page.locator('#fourier_colormap_label').inner_text() == 'Colormap: inferno'
             assert page.locator('#fourier_illumination_img').is_visible()
 
+            # Fourier sequence: batch upload, manual reorder, and synced result panels
+            seq_dir = Path(tempfile.mkdtemp(prefix='fourier-seq-'))
+            seq_files = []
+            for file_name, ramp_step in (
+                ('fourier_seq_alpha.png', 4),
+                ('fourier_seq_beta.png', 8),
+            ):
+                pattern = bytes(
+                    (pixel * ramp_step) % 256 for pixel in range(64 * 64)
+                )
+                file_path = seq_dir / file_name
+                Image.frombytes('L', (64, 64), pattern).save(file_path)
+                seq_files.append(file_path)
+
+            page.locator('#fourier_seq_upload_input').set_input_files(
+                [str(path) for path in seq_files]
+            )
+            wait_for_state(page, 'Fourier sequence upload',
+                "document.querySelectorAll('#fourier_seq_list .sequence-item').length === 2"
+            )
+            assert '共 2 帧' in page.locator('#fourier_seq_status').inner_text()
+
+            # reorder: move second frame up, then move it back down.
+            # FileReader callbacks may resolve out of file order, so assert relative order only.
+            first_name_before = page.locator(
+                '#fourier_seq_list .sequence-item:nth-child(1) .seq-params'
+            ).inner_text()
+            second_name_before = page.locator(
+                '#fourier_seq_list .sequence-item:nth-child(2) .seq-params'
+            ).inner_text()
+            page.locator(
+                "#fourier_seq_list .sequence-item:nth-child(2) button[title='上移该帧']"
+            ).click()
+            assert page.locator(
+                '#fourier_seq_list .sequence-item:nth-child(1) .seq-params'
+            ).inner_text() == second_name_before
+            page.locator(
+                "#fourier_seq_list .sequence-item:nth-child(1) button[title='下移该帧']"
+            ).click()
+            assert page.locator(
+                '#fourier_seq_list .sequence-item:nth-child(1) .seq-params'
+            ).inner_text() == first_name_before
+
+            # batch simulation must sync the color/log/raw intensity panels
+            page.locator('#fourier_seq_sim_btn').click()
+            wait_for_state(page, 'Fourier sequence panel sync',
+                "document.querySelector('#fourier_result_frame_bar')?.style.display === 'block' "
+                "&& document.querySelector('#fourier_result_frame_select')?.options.length === 2 "
+                "&& document.querySelector('#fourier_color_img')?.src.startsWith('data:image/') "
+                "&& document.querySelector('#fourier_log_img')?.src.startsWith('data:image/') "
+                "&& document.querySelector('#fourier_raw_img')?.src.startsWith('data:image/') "
+                "&& document.querySelector('#fourier_colormap_label')?.textContent.includes('序列帧 1/2')"
+            )
+            assert '模拟完成' in page.locator('#fourier_seq_progress').inner_text()
+
+            # switching the frame selector must update all three panels
+            frame_one_color = page.evaluate(
+                "document.querySelector('#fourier_color_img').src"
+            )
+            page.locator('#fourier_result_frame_select').select_option('1')
+            page.wait_for_function(
+                "prev => document.querySelector('#fourier_color_img').src !== prev",
+                arg=frame_one_color
+            )
+            assert '序列帧 2/2' in page.locator('#fourier_colormap_label').inner_text()
+            assert page.locator('#fourier_log_img').get_attribute('src') != \
+                page.locator('#fourier_raw_img').get_attribute('src')
+
             assert not console_errors, f'Browser console errors: {console_errors}'
             assert not page_errors, f'Uncaught page errors: {page_errors}'
             assert not failed_requests, f'Failed browser requests: {failed_requests}'
@@ -322,6 +441,7 @@ def run_browser_regression():
         'base_url': base_url,
         'checks': [
             'preset create, apply, and delete',
+            'single-module view switching via quick navigation and top menu, no collapse buttons',
             'Fresnel generation and history parameter restore',
             'preview zoom in, out, and reset',
             'rapid Fresnel submissions are coalesced into one request',
@@ -329,6 +449,7 @@ def run_browser_regression():
             'looping sequence stops and clears its playback interval',
             'BMP converter upload, grayscale conversion, preview, and download state',
             'Fourier upload, Gaussian illumination, four previews, and download state',
+            'Fourier sequence upload, manual reorder, synced intensity panels, and frame switching',
             'custom spot-array editing and persistence',
             '390px responsive layout without horizontal overflow',
             'double-ring target, phase, and reconstruction previews are visible',
