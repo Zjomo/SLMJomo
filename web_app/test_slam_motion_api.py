@@ -178,6 +178,9 @@ class MotionJobApiTests(unittest.TestCase):
             self.assertEqual(second.get_json()['completed_frames'], 2)
             self.assertEqual(second.get_json()['index'], 1)
 
+            # A new worker/process can recover completed tasks from disk.
+            with SLAM_MOTION_JOBS_LOCK:
+                SLAM_MOTION_JOBS.pop(job_id, None)
             status = self.client.get(f'/api/slam/motion/jobs/{job_id}').get_json()
             self.assertEqual(status['status'], 'complete')
             phase = self.client.get(status['frames'][0]['phase_url'])

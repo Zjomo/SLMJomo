@@ -1271,10 +1271,35 @@
                                 <div class="slam-image-input">
                                     <button type="button" class="btn btn-secondary" onclick="document.getElementById('slam_image_input').click()">选择显微镜图像</button>
                                     <input type="file" id="slam_image_input" accept="image/*" hidden>
+                                    <button type="button" class="btn btn-secondary" id="slam_camera_start_btn" title="启动摄像头实时画面">启动摄像头</button>
+                                    <button type="button" class="btn btn-secondary" id="slam_screen_start_btn" title="共享显微镜画面所在窗口或屏幕">共享屏幕</button>
+                                    <button type="button" class="btn btn-secondary" id="slam_camera_stop_btn" title="停止实时画面">停止实时</button>
+                                    <button type="button" class="btn btn-secondary" id="slam_roi_button" aria-pressed="false" title="在画面上拖拽选择 ROI 区域">选择 ROI</button>
                                     <button type="button" class="btn btn-secondary slam-origin-button" id="slam_origin_button" aria-pressed="false">设置标定原点</button>
                                 </div>
+                                <div class="slam-calibration-row">
+                                    <label for="slam_reference_distance_um">标尺实际长度（μm）
+                                        <input type="number" class="param-input" id="slam_reference_distance_um" value="100" min="0.000001" max="100000000" step="any" inputmode="decimal">
+                                    </label>
+                                    <button type="button" class="btn btn-secondary" id="slam_scale_button" aria-pressed="false" title="依次点击 ROI 内标尺的两个端点">两点标定</button>
+                                    <output id="slam_scale_status" class="slam-scale-status" aria-live="polite">未完成距离标定</output>
+                                </div>
                                 <div class="slam-canvas-frame">
-                                    <canvas id="slam_microscope_canvas" width="960" height="640" tabindex="0" role="img" aria-label="显微镜图像。点击添加材料，开启设置原点后点击可设定标定原点。使用方向键移动标记，按 Enter 确认。"></canvas>
+                                    <canvas id="slam_microscope_canvas" width="960" height="640" tabindex="0" role="img" aria-label="实时显微镜画面或导入图像。可拖拽选择 ROI，点击标记材料、标定原点或两点距离。"></canvas>
+                                </div>
+                                <div class="slam-spot-feedback">
+                                    <label for="slam_detection_radius_px">局部搜索半径（px）
+                                        <input type="number" class="param-input" id="slam_detection_radius_px" value="16" min="3" max="128" step="1">
+                                    </label>
+                                    <label for="slam_feedback_gain">补偿增益
+                                        <input type="number" class="param-input" id="slam_feedback_gain" value="0.75" min="0.1" max="1" step="0.05">
+                                    </label>
+                                    <div class="slam-toolbar">
+                                        <button type="button" class="btn btn-secondary" id="slam_feedback_mode_btn" disabled>校准当前帧光斑</button>
+                                        <button type="button" class="btn btn-secondary" id="slam_apply_feedback_btn" disabled>应用位置补偿</button>
+                                        <button type="button" class="btn btn-secondary" id="slam_clear_feedback_btn" disabled>清除补偿</button>
+                                    </div>
+                                    <output id="slam_feedback_report" class="slam-feedback-report" aria-live="polite">先生成一版路径相位帧，再测量当前帧的三个光斑。</output>
                                 </div>
                                 <div class="slam-calibration-row">
                                     <label for="slam_pixels_per_um">标定比例（px/μm）
@@ -2329,6 +2354,7 @@
     <script src="{{ url_for('static', filename='js/spot_array.js') }}"></script>
     <script src="{{ url_for('static', filename='js/paint_board.js') }}"></script>
     <script src="{{ url_for('static', filename='js/usb_slm.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/slam_spot_vision.js') }}"></script>
     <script src="{{ url_for('static', filename='js/slam_motion.js') }}"></script>
 </body>
 </html>

@@ -111,6 +111,21 @@ def run_browser_regression():
             mobile_width = page.evaluate('document.documentElement.scrollWidth')
             assert mobile_width <= 390, f'390px viewport overflows to {mobile_width}px'
             page.set_viewport_size({'width': 1280, 'height': 900})
+            goto_module(page, 'slam-motion')
+            assert_single_module_visible(page, 'slam-motion')
+            page.set_viewport_size({'width': 390, 'height': 844})
+            for selector in (
+                '#slam_feedback_mode_btn', '#slam_apply_feedback_btn',
+                '#slam_clear_feedback_btn', '#slam_feedback_report'
+            ):
+                assert page.locator(selector).is_visible(), f'{selector} is not visible at mobile width'
+            feedback_box = page.locator('.slam-spot-feedback').bounding_box()
+            assert feedback_box and feedback_box['x'] >= 0 and \
+                feedback_box['x'] + feedback_box['width'] <= 390, \
+                f'SLAM feedback controls overflow the mobile viewport: {feedback_box}'
+            mobile_width = page.evaluate('document.documentElement.scrollWidth')
+            assert mobile_width <= 390, f'SLAM feedback controls overflow to {mobile_width}px'
+            page.set_viewport_size({'width': 1280, 'height': 900})
             goto_module(page, 'double-ring')
             assert_single_module_visible(page, 'double-ring')
             double_ring_images = (

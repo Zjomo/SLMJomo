@@ -10,22 +10,27 @@ function element(id, value = '') {
         textContent: '',
         dataset: {},
         disabled: false,
+        width: id.endsWith('canvas') ? 960 : 0,
+        height: id.endsWith('canvas') ? 640 : 0,
+        listeners: {},
         classList: { add() {}, remove() {}, toggle() {} },
-        setAttribute() {},
+        setAttribute(name, value) { this[name] = value; },
         removeAttribute() {},
-        addEventListener() {},
+        addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); },
         querySelectorAll() { return []; },
         replaceChildren() {},
         append() {},
         appendChild() {},
+        setPointerCapture() {},
         remove() {},
         click() {},
         getContext() {
             return {
-                clearRect() {}, fillRect() {}, drawImage() {}, beginPath() {}, arc() {},
+                clearRect() {}, fillRect() {}, strokeRect() {}, drawImage() {}, beginPath() {}, arc() {},
                 fill() {}, stroke() {}, moveTo() {}, lineTo() {}, fillText() {}, setLineDash() {}
             };
         },
+        getBoundingClientRect() { return { left: 0, top: 0, width: this.width || 960, height: this.height || 640 }; },
         getBoundingClientRect() { return { left: 0, top: 0, width: this.width || 960, height: this.height || 640 }; }
     };
     elements.set(id, item);
@@ -41,13 +46,23 @@ function element(id, value = '') {
     ['slam_speed_um_s', '2'], ['slam_frame_interval_ms', '100'],
     ['slam_iterations', '30'], ['slam_focus_scale_x', '1.5'],
     ['slam_focus_scale_y', '0.8'], ['slam_focus_field_um', '20'], ['slam_status', '']
+    ,['slam_reference_distance_um', '50'], ['slam_pixels_per_um', '2'],
+    ['slam_detection_radius_px', '16'], ['slam_feedback_gain', '0.75']
 ].forEach(([id, value]) => element(id, value));
+[
+    'slam_microscope_canvas', 'slam_focus_canvas', 'slam_marker_list', 'slam_assign_select',
+    'slam_origin_button', 'slam_roi_button', 'slam_scale_button', 'slam_scale_status',
+    'slam_camera_stop_btn', 'slam_camera_start_btn', 'slam_screen_start_btn',
+    'slam_spot_tabs', 'slam_progress', 'slam_phase_preview', 'slam_recon_preview',
+    'slam_feedback_mode_btn', 'slam_apply_feedback_btn', 'slam_clear_feedback_btn',
+    'slam_feedback_report'
+].forEach(id => element(id));
 
 const document = {
     readyState: 'loading',
     getElementById(id) { return elements.get(id) || null; },
     addEventListener() {},
-    createElement() { return element(`created-${Math.random()}`); },
+    createElement(tag) { const item = element(`created-${Math.random()}`); item.tagName = String(tag).toUpperCase(); return item; },
     body: { append() {} }
 };
 let navigatedTo = null;
@@ -64,7 +79,19 @@ async function fetchMock(url, options = {}) {
         return { ok: true, status: 200, json: async () => ({ success: true, completed_frames: nextFrame }) };
     }
     if (url === '/api/slam/motion/jobs/job-generated') {
-        return { ok: true, status: 200, json: async () => ({ success: true, status: 'complete', frame_count: 2 }) };
+        return { ok: true, status: 200, json: async () => ({
+            success: true, status: 'complete', frame_count: 2,
+            frames: [0, 1].map(index => ({
+                index,
+                spots: [
+                    { id: 'spot-1', x_um: 0, y_um: 0 },
+                    { id: 'spot-2', x_um: 5, y_um: 6 },
+                    { id: 'spot-3', x_um: -2, y_um: 7 }
+                ],
+                phase_url: `/phase/${index}`,
+                reconstruction_url: `/reconstruction/${index}`
+            }))
+        }) };
     }
     throw new Error(`Unexpected fetch ${options.method || 'GET'} ${url}`);
 }
@@ -75,16 +102,19 @@ const window = {
     confirm() { return true; },
     setTimeout
 };
-const context = { document, window, console, Number, Math, Promise, Array, String, Object, Error, setTimeout, fetch: fetchMock };
+const context = { document, window, console, Number, Math, Promise, Array, String, Object, Error, setTimeout, fetch: fetchMock,
+    requestAnimationFrame() { return 1; }, cancelAnimationFrame() {} };
 context.Image = class MockImage {
     constructor() { this.naturalWidth = 1200; this.naturalHeight = 800; }
     set src(value) { this._src = value; if (this.onload) this.onload(); }
     get src() { return this._src; }
 };
 vm.createContext(context);
+vm.runInContext(fs.readFileSync('static/js/slam_spot_vision.js', 'utf8'), context);
 vm.runInContext(fs.readFileSync('static/js/slam_motion.js', 'utf8'), context);
 
 const motion = window.SLAMMotion;
+motion.initialize();
 motion.state.image = { naturalWidth: 1200, naturalHeight: 800 };
 motion.state.imageDataUrl = 'data:image/png;base64,microscope';
 motion.state.origin = { x_px: 100, y_px: 200 };
@@ -112,6 +142,15 @@ assert.equal(JSON.stringify(payload.paths[0].waypoints[1]), JSON.stringify({ x_u
 
 assert.equal(JSON.stringify(motion.sampleToFocusUm(110, 190)), JSON.stringify({ x_um: 7.5, y_um: 4 }));
 
+elements.get('slam_scale_button').listeners.click[0]();
+const microscope = elements.get('slam_microscope_canvas');
+microscope.listeners.click[0]({ clientX: 100, clientY: 100 });
+microscope.listeners.click[0]({ clientX: 300, clientY: 100 });
+assert.equal(Number(elements.get('slam_pixels_per_um').value), 5,
+    'two-point calibration converts known micrometre distance to px/um');
+assert.equal(Number(elements.get('slam_um_per_px').value), 0.2);
+assert.match(elements.get('slam_scale_status').textContent, /0\.200000 μm\/px/);
+
 const saved = motion.getProjectState();
 saved.paths[0][0].x_um = 999;
 assert.equal(motion.state.paths[0][0].x_um, 1, 'project state must be a detached copy');
@@ -126,6 +165,26 @@ motion.state.phaseUrls = ['/phase/0'];
     assert.equal(requests.length, 4, 'job creation, two sequential frames, and final status');
     assert.equal(requests[1].url, '/api/slam/motion/jobs/job-generated/next');
     assert.equal(requests[2].url, '/api/slam/motion/jobs/job-generated/next');
+    assert.equal(motion.state.jobFrames.length, 2);
+
+    assert.equal(motion.beginSpotFeedback(), true);
+    motion.recordSpotMeasurement(0, { x_px: 105, y_px: 195 }, { confidence: 0.9, area_px: 10 });
+    motion.recordSpotMeasurement(1, { x_px: 121.6666666667, y_px: 157.5 });
+    motion.recordSpotMeasurement(2, { x_px: 93.3333333333, y_px: 151.25 });
+    const offsets = motion.applySpotFeedback();
+    assert.ok(Math.abs(offsets[0].x_um + 1.125) < 1e-9);
+    assert.ok(Math.abs(offsets[0].y_um + 0.6) < 1e-9);
+    assert.ok(Math.abs(offsets[2].x_um) < 1e-9);
+    assert.ok(Math.abs(offsets[2].y_um + 0.6) < 1e-9);
+    const correctedPayload = motion.buildPayload();
+    assert.ok(Math.abs(correctedPayload.paths[0].waypoints[0].x_um + 0.125) < 1e-9);
+    assert.ok(Math.abs(correctedPayload.paths[0].waypoints[0].y_um - 1.4) < 1e-9);
+    const correctedProject = motion.getProjectState();
+    assert.ok(Math.abs(correctedProject.feedback_offsets_um[0].x_um + 1.125) < 1e-9);
+    elements.get('slam_focus_scale_x').value = '2';
+    assert.equal(motion.beginSpotFeedback(), false,
+        'feedback measurements must use the calibration snapshot that generated the selected job');
+    elements.get('slam_focus_scale_x').value = '1.5';
 
     assert.equal(await motion.addSLAMFramesToCGH(), true);
     assert.equal(appendedJobId, 'job-generated');
@@ -137,13 +196,27 @@ motion.state.phaseUrls = ['/phase/0'];
     assert.equal(motion.state.paths[0][0].x_um, 1, 'project import restores stored path data');
     assert.equal(motion.state.imageDataUrl, 'data:image/png;base64,microscope');
     assert.equal(motion.state.jobId, null, 'job images are regenerated from saved path state');
+    assert.deepEqual(JSON.parse(JSON.stringify(motion.state.feedbackOffsets)), [
+        { x_um: 0, y_um: 0 }, { x_um: 0, y_um: 0 }, { x_um: 0, y_um: 0 }
+    ]);
 
     motion.state.paths[2] = [];
     assert.throws(() => motion.buildPayload(), /三个光斑都需要至少一个有效路径点/);
 
+    elements.get('slam_roi_button').listeners.click[0]();
+    microscope.listeners.pointerdown[0]({ clientX: 100, clientY: 100, pointerId: 1 });
+    microscope.listeners.pointermove[0]({ clientX: 300, clientY: 300, pointerId: 1 });
+    microscope.listeners.pointerup[0]({ clientX: 300, clientY: 300, pointerId: 1 });
+    assert.deepEqual(JSON.parse(JSON.stringify(motion.state.roi)), {
+        x: 125, y: 125, width: 250, height: 250
+    });
+    assert.equal(motion.state.markers.length, 0, 'ROI changes reset old image-coordinate markers');
+
     const template = fs.readFileSync('templates/index_pro.html', 'utf8');
     const requiredIds = [
         'slam_image_input', 'slam_microscope_canvas', 'slam_origin_button', 'slam_marker_list',
+        'slam_camera_start_btn', 'slam_screen_start_btn', 'slam_camera_stop_btn', 'slam_roi_button',
+        'slam_reference_distance_um', 'slam_scale_button', 'slam_scale_status',
         'slam_assign_select', 'slam_spot_tabs', 'slam_focus_canvas', 'slam_pixels_per_um',
         'slam_um_per_px', 'slam_focal_um', 'slam_wavelength_nm', 'slam_magnification',
         'slam_algorithm', 'slam_phase_direction', 'slam_beam_diameter_mm',
@@ -152,13 +225,16 @@ motion.state.phaseUrls = ['/phase/0'];
         'slam_focus_field_um', 'slam_generate_btn', 'slam_add_cgh_btn', 'slam_export_btn',
         'slam_usb_start_slot', 'slam_usb_overwrite', 'slam_upload_btn', 'slam_status',
         'slam_progress', 'slam_frame_counter', 'slam_phase_preview', 'slam_recon_preview',
-        'slam_preview_prev', 'slam_preview_next'
+        'slam_preview_prev', 'slam_preview_next', 'slam_detection_radius_px',
+        'slam_feedback_gain', 'slam_feedback_mode_btn', 'slam_apply_feedback_btn',
+        'slam_clear_feedback_btn', 'slam_feedback_report'
     ];
     requiredIds.forEach(id => assert.equal((template.match(new RegExp(`id="${id}"`, 'g')) || []).length, 1,
         `template contains exactly one ${id}`));
     assert.match(template, /id="slam-motion"[\s\S]*id="cgh-simulation"/);
     assert.match(template, /css\/slam_motion\.css/);
     assert.match(template, /js\/slam_motion\.js/);
+    assert.match(template, /js\/slam_spot_vision\.js/);
     process.stdout.write('SLAM motion UI contract: 6 checks passed\n');
 })().catch(error => {
     process.stderr.write(`${error.stack || error}\n`);

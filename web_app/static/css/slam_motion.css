@@ -55,6 +55,82 @@
     cursor: crosshair;
 }
 
+#slam_microscope_canvas.roi-selecting {
+    cursor: crosshair;
+}
+
+#slam_microscope_canvas.calibration-selecting {
+    cursor: cell;
+}
+
+.slam-scale-status {
+    align-self: end;
+    min-height: 34px;
+    padding: 8px 2px;
+    color: #275d63;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+.slam-spot-feedback {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px 12px;
+    margin: 10px 0;
+    padding: 9px;
+    border: 1px solid #d7dfe2;
+    border-radius: 4px;
+    background: #f7f9f9;
+}
+
+.slam-spot-feedback label {
+    display: block;
+    min-width: 0;
+    color: #46535c;
+    font-size: 12px;
+}
+
+.slam-spot-feedback label input {
+    display: block;
+    width: 100%;
+    min-height: 34px;
+    margin-top: 4px;
+}
+
+.slam-spot-feedback .slam-toolbar,
+.slam-feedback-report {
+    grid-column: 1 / -1;
+}
+
+.slam-feedback-report {
+    min-height: 30px;
+    color: #46535c;
+    font-size: 12px;
+    line-height: 1.45;
+    white-space: pre-line;
+}
+
+.slam-feedback-report[data-state="error"] {
+    color: #a72f2f;
+}
+
+.slam-feedback-report[data-state="success"] {
+    color: #16734b;
+}
+
+#slam_feedback_mode_btn.is-active {
+    color: #fff;
+    background: #087f8c;
+    border-color: #087f8c;
+}
+
+#slam_roi_button.is-active,
+#slam_scale_button.is-active {
+    color: #fff;
+    background: #087f8c;
+    border-color: #087f8c;
+}
+
 #slam_focus_canvas {
     cursor: crosshair;
 }

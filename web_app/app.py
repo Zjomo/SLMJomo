@@ -15,6 +15,7 @@ import shutil
 import threading
 import zipfile
 import uuid
+import re
 from datetime import datetime
 import json
 from functools import lru_cache
@@ -2889,6 +2890,58 @@ SLAM_MOTION_JOBS_LOCK = threading.RLock()
 SLAM_MOTION_USB_LOCK = threading.Lock()
 
 
+def _get_slam_motion_job(job_id):
+    """Return an in-memory job or restore a completed job from its manifest."""
+    job_id = str(job_id)
+    with SLAM_MOTION_JOBS_LOCK:
+        job = SLAM_MOTION_JOBS.get(job_id)
+    if job is not None or not re.fullmatch(r'[0-9a-f]{32}', job_id):
+        return job
+
+    try:
+        for date_name in os.listdir(LINGO_OUTPUT_DIR):
+            if not re.fullmatch(r'\d{8}', date_name):
+                continue
+            directory = os.path.join(LINGO_OUTPUT_DIR, date_name, job_id)
+            manifest_path = os.path.join(directory, 'manifest.json')
+            if not os.path.isfile(manifest_path):
+                continue
+            with open(manifest_path, 'r', encoding='utf-8') as manifest_file:
+                manifest = json.load(manifest_file)
+            frames = manifest.get('frames')
+            if manifest.get('job_id') != job_id or not isinstance(frames, list) or not frames:
+                continue
+            valid_frames = all(
+                isinstance(frame, dict)
+                and isinstance(frame.get('phase_file'), str)
+                and os.path.basename(frame['phase_file']) == frame['phase_file']
+                and os.path.isfile(os.path.join(directory, frame['phase_file']))
+                for frame in frames
+            )
+            if not valid_frames:
+                continue
+            restored = {
+                'id': job_id,
+                'status': 'complete',
+                'plan': frames,
+                'paths': manifest.get('paths', []),
+                'calibration': manifest.get('calibration', {}),
+                'parameters': manifest.get('parameters', {}),
+                'generated_frames': frames,
+                'next_index': len(frames),
+                'directory': directory,
+                'final_dir': directory,
+                'output_path': os.path.join('output', 'Lingo', date_name, job_id),
+                'lock': threading.Lock(),
+                'error': None,
+            }
+            with SLAM_MOTION_JOBS_LOCK:
+                return SLAM_MOTION_JOBS.setdefault(job_id, restored)
+    except (OSError, ValueError, TypeError):
+        return None
+    return None
+
+
 def _motion_number(value, name, minimum=None, maximum=None):
     if isinstance(value, bool):
         raise ValueError(f'{name} 必须是有限数值')
@@ -3149,8 +3202,7 @@ def create_slam_motion_job():
 
 @app.route('/api/slam/motion/jobs/<job_id>', methods=['GET'])
 def get_slam_motion_job(job_id):
-    with SLAM_MOTION_JOBS_LOCK:
-        job = SLAM_MOTION_JOBS.get(job_id)
+    job = _get_slam_motion_job(job_id)
     if job is None:
         return jsonify({'success': False, 'error': '运动任务不存在'}), 404
     return jsonify(_motion_job_status(job))
@@ -3265,8 +3317,7 @@ def _motion_frame_path(job, index, kind):
 
 @app.route('/api/slam/motion/jobs/<job_id>/frames/<int:index>/phase', methods=['GET'])
 def get_slam_motion_phase_frame(job_id, index):
-    with SLAM_MOTION_JOBS_LOCK:
-        job = SLAM_MOTION_JOBS.get(job_id)
+    job = _get_slam_motion_job(job_id)
     path = _motion_frame_path(job, index, 'phase') if job else None
     if path is None or not os.path.isfile(path):
         return jsonify({'success': False, 'error': '相位帧不存在'}), 404
@@ -3275,8 +3326,7 @@ def get_slam_motion_phase_frame(job_id, index):
 
 @app.route('/api/slam/motion/jobs/<job_id>/frames/<int:index>/reconstruction', methods=['GET'])
 def get_slam_motion_reconstruction_frame(job_id, index):
-    with SLAM_MOTION_JOBS_LOCK:
-        job = SLAM_MOTION_JOBS.get(job_id)
+    job = _get_slam_motion_job(job_id)
     path = _motion_frame_path(job, index, 'reconstruction') if job else None
     if path is None or not os.path.isfile(path):
         return jsonify({'success': False, 'error': '重建帧不存在'}), 404
@@ -3285,8 +3335,7 @@ def get_slam_motion_reconstruction_frame(job_id, index):
 
 @app.route('/api/slam/motion/jobs/<job_id>/export.zip', methods=['GET'])
 def export_slam_motion_job(job_id):
-    with SLAM_MOTION_JOBS_LOCK:
-        job = SLAM_MOTION_JOBS.get(job_id)
+    job = _get_slam_motion_job(job_id)
     if job is None:
         return jsonify({'success': False, 'error': '运动任务不存在'}), 404
     with job['lock']:
@@ -3334,8 +3383,7 @@ def upload_slam_motion_job_to_usb_slm():
     )
 
     data = request.get_json(silent=True) or {}
-    with SLAM_MOTION_JOBS_LOCK:
-        job = SLAM_MOTION_JOBS.get(str(data.get('job_id', '')))
+    job = _get_slam_motion_job(data.get('job_id', ''))
     if job is None:
         return jsonify({'success': False, 'error': '运动任务不存在'}), 404
     if job['status'] != 'complete':
@@ -3437,4 +3485,12 @@ if __name__ == '__main__':
     print("按 Ctrl+C 停止服务器")
     print("="*60 + "\n")
 
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    # The reloader restarts this process on source changes and drops in-memory
+    # SLAM motion jobs while requests may still be in flight.
+    app.run(
+        debug=False,
+        use_reloader=False,
+        host='0.0.0.0',
+        port=5000,
+        threaded=True,
+    )

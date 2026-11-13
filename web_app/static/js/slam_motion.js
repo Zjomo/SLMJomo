@@ -11,6 +11,17 @@
         image: null,
         imageDataUrl: null,
         imageDrawRect: null,
+        roi: null,
+        roiMode: false,
+        roiDragStart: null,
+        roiDragCurrent: null,
+        scaleMode: false,
+        scalePoints: [],
+        mediaStream: null,
+        mediaFrameRequest: 0,
+        mediaSourceName: null,
+        liveImageCaptured: false,
+        suppressMicroscopeClick: false,
         markers: [],
         selectedMarkerId: null,
         origin: null,
@@ -19,18 +30,32 @@
         assignments: [null, null, null],
         paths: [[], [], []],
         jobId: null,
+        jobCalibration: null,
+        jobFrames: [],
         phaseUrls: [],
         reconstructionUrls: [],
         previewIndex: 0,
+        feedbackMode: false,
+        feedbackMeasurements: [null, null, null],
+        feedbackOffsets: [{ x_um: 0, y_um: 0 }, { x_um: 0, y_um: 0 }, { x_um: 0, y_um: 0 }],
         cursorImagePx: null,
         cursorFocusUm: { x_um: 0, y_um: 0 },
         generating: false,
         addingToCgh: false,
-        uploading: false
+        uploading: false,
+        exporting: false
     };
 
     function byId(id) {
         return document.getElementById(id);
+    }
+
+    function imageWidth() {
+        return state.image?.videoWidth || state.image?.naturalWidth || state.image?.width || 0;
+    }
+
+    function imageHeight() {
+        return state.image?.videoHeight || state.image?.naturalHeight || state.image?.height || 0;
     }
 
     function numberValue(id, fallback) {
@@ -81,10 +106,62 @@
 
     function assignControlsEnabled(enabled) {
         ['slam_add_cgh_btn', 'slam_export_btn', 'slam_upload_btn',
-            'slam_preview_prev', 'slam_preview_next'].forEach(id => {
+            'slam_preview_prev', 'slam_preview_next', 'slam_feedback_mode_btn'].forEach(id => {
             const element = byId(id);
             if (element) element.disabled = !enabled;
         });
+        updateFeedbackButtons();
+    }
+
+    function updateFeedbackButtons() {
+        const mode = byId('slam_feedback_mode_btn');
+        const apply = byId('slam_apply_feedback_btn');
+        const clear = byId('slam_clear_feedback_btn');
+        const ready = state.feedbackMeasurements.every(item =>
+            item && item.frame_index === state.previewIndex);
+        if (mode) mode.disabled = !state.jobId || !state.jobFrames.length ||
+            !state.image || !state.origin || !jobCalibrationMatchesCurrent();
+        if (apply) apply.disabled = !state.feedbackMode || !ready;
+        if (clear) clear.disabled = state.feedbackOffsets.every(offset =>
+            Math.abs(offset.x_um) < 1e-12 && Math.abs(offset.y_um) < 1e-12);
+    }
+
+    function currentFeedbackCalibration() {
+        if (!state.origin) return null;
+        return {
+            origin_x_px: Number(state.origin.x_px),
+            origin_y_px: Number(state.origin.y_px),
+            pixels_per_um: numberValue('slam_pixels_per_um', NaN),
+            focus_scale_x: numberValue('slam_focus_scale_x', 1),
+            focus_scale_y: numberValue('slam_focus_scale_y', 1)
+        };
+    }
+
+    function jobCalibrationMatchesCurrent() {
+        const current = currentFeedbackCalibration();
+        if (!current || !state.jobCalibration) return false;
+        return Object.keys(current).every(key => Number.isFinite(current[key]) &&
+            Math.abs(current[key] - state.jobCalibration[key]) <= 1e-9);
+    }
+
+    function setFeedbackReport(message, stateName) {
+        const report = byId('slam_feedback_report');
+        if (!report) return;
+        report.textContent = message;
+        report.dataset.state = stateName || 'info';
+    }
+
+    function resetFeedbackForCalibrationChange() {
+        state.feedbackOffsets = [{ x_um: 0, y_um: 0 }, { x_um: 0, y_um: 0 }, { x_um: 0, y_um: 0 }];
+        state.feedbackMeasurements = [null, null, null];
+        state.feedbackMode = false;
+        const button = byId('slam_feedback_mode_btn');
+        if (button) {
+            button.classList.remove('is-active');
+            button.setAttribute('aria-pressed', 'false');
+        }
+        setFeedbackReport('坐标标定已更改，请重新生成相位帧后再做反馈测量。', 'info');
+        updateFeedbackButtons();
     }
 
     function finitePoint(point) {
@@ -114,10 +191,11 @@
                 canvasX > rect.x + rect.width || canvasY > rect.y + rect.height) {
             return null;
         }
+        const roi = state.roi || { x: 0, y: 0, width: imageWidth(), height: imageHeight() };
         return {
-            x_px: Math.max(0, Math.min(state.image.naturalWidth,
+            x_px: Math.max(0, Math.min(roi.width,
                 (canvasX - rect.x) / rect.scale)),
-            y_px: Math.max(0, Math.min(state.image.naturalHeight,
+            y_px: Math.max(0, Math.min(roi.height,
                 (canvasY - rect.y) / rect.scale))
         };
     }
@@ -143,6 +221,8 @@
     function drawMicroscope() {
         const canvas = byId('slam_microscope_canvas');
         if (!canvas) return;
+        canvas.classList?.toggle('roi-selecting', state.roiMode);
+        canvas.classList?.toggle('calibration-selecting', state.scaleMode);
         const context = canvas.getContext('2d');
         if (!context) return;
         context.clearRect(0, 0, canvas.width, canvas.height);
@@ -151,14 +231,15 @@
         state.imageDrawRect = null;
 
         if (state.image) {
-            const scale = Math.min(canvas.width / state.image.naturalWidth,
-                canvas.height / state.image.naturalHeight);
-            const width = state.image.naturalWidth * scale;
-            const height = state.image.naturalHeight * scale;
+            const roi = state.roi || { x: 0, y: 0, width: imageWidth(), height: imageHeight() };
+            const scale = Math.min(canvas.width / roi.width,
+                canvas.height / roi.height);
+            const width = roi.width * scale;
+            const height = roi.height * scale;
             const x = (canvas.width - width) / 2;
             const y = (canvas.height - height) / 2;
             state.imageDrawRect = { x, y, width, height, scale };
-            context.drawImage(state.image, x, y, width, height);
+            context.drawImage(state.image, roi.x, roi.y, roi.width, roi.height, x, y, width, height);
         } else {
             context.fillStyle = '#d2d9de';
             context.font = '16px Segoe UI, Microsoft YaHei, sans-serif';
@@ -181,6 +262,21 @@
             context.textAlign = 'left';
             context.fillStyle = '#fff';
             context.fillText(marker.name, point.x + 9, point.y - 7);
+        });
+
+        state.feedbackMeasurements.forEach((measurement, index) => {
+            if (!measurement) return;
+            const point = microscopeCanvasPointFromSource(measurement);
+            if (!point) return;
+            context.beginPath();
+            context.arc(point.x, point.y, 9, 0, Math.PI * 2);
+            context.lineWidth = 2;
+            context.strokeStyle = COLORS[index];
+            context.stroke();
+            context.fillStyle = '#fff';
+            context.font = 'bold 12px Segoe UI, sans-serif';
+            context.textAlign = 'center';
+            context.fillText(String(index + 1), point.x, point.y + 4);
         });
 
         if (state.origin) {
@@ -210,6 +306,41 @@
                 context.stroke();
                 context.setLineDash([]);
             }
+        }
+
+        if (state.scalePoints.length) {
+            const first = microscopeCanvasPointFromSource(state.scalePoints[0]);
+            if (first) {
+                context.fillStyle = '#f5d547';
+                context.strokeStyle = '#111a20';
+                context.lineWidth = 2;
+                context.beginPath();
+                context.arc(first.x, first.y, 6, 0, Math.PI * 2);
+                context.fill();
+                context.stroke();
+                if (state.scalePoints[1]) {
+                    const second = microscopeCanvasPointFromSource(state.scalePoints[1]);
+                    context.beginPath();
+                    context.moveTo(first.x, first.y);
+                    context.lineTo(second.x, second.y);
+                    context.stroke();
+                }
+            }
+        }
+
+        if (state.roiMode && state.roiDragStart && state.roiDragCurrent) {
+            const rect = state.imageDrawRect;
+            const left = Math.min(state.roiDragStart.x, state.roiDragCurrent.x);
+            const top = Math.min(state.roiDragStart.y, state.roiDragCurrent.y);
+            const width = Math.abs(state.roiDragCurrent.x - state.roiDragStart.x);
+            const height = Math.abs(state.roiDragCurrent.y - state.roiDragStart.y);
+            context.fillStyle = 'rgba(8, 127, 140, 0.18)';
+            context.strokeStyle = '#fff';
+            context.lineWidth = 2;
+            context.fillRect(rect.x + left * rect.scale, rect.y + top * rect.scale,
+                width * rect.scale, height * rect.scale);
+            context.strokeRect(rect.x + left * rect.scale, rect.y + top * rect.scale,
+                width * rect.scale, height * rect.scale);
         }
     }
 
@@ -265,16 +396,21 @@
         state.paths.forEach((path, index) => {
             const color = COLORS[index];
             if (path.length) {
+                const offset = state.feedbackOffsets[index];
+                const correctedPath = path.map(point => ({
+                    x_um: point.x_um + offset.x_um,
+                    y_um: point.y_um + offset.y_um
+                }));
                 context.strokeStyle = color;
                 context.lineWidth = index === state.activeSpot ? 3 : 2;
                 context.beginPath();
-                path.forEach((point, pointIndex) => {
+                correctedPath.forEach((point, pointIndex) => {
                     const position = toCanvas(point);
                     if (pointIndex === 0) context.moveTo(position.x, position.y);
                     else context.lineTo(position.x, position.y);
                 });
                 context.stroke();
-                path.forEach((point, pointIndex) => {
+                correctedPath.forEach((point, pointIndex) => {
                     const position = toCanvas(point);
                     context.beginPath();
                     context.arc(position.x, position.y, pointIndex === 0 ? 7 : 4, 0, Math.PI * 2);
@@ -302,9 +438,9 @@
         const select = byId('slam_assign_select');
         if (!list) return;
 
+        const priorValue = state.selectedMarkerId || '';
         list.replaceChildren();
         if (select) {
-            const priorValue = state.selectedMarkerId || '';
             select.replaceChildren();
             const placeholder = document.createElement('option');
             placeholder.value = '';
@@ -428,11 +564,215 @@
         setStatus(`${marker.name} 已标记`, 'success');
     }
 
+    function beginSpotFeedback() {
+        if (!state.image || !state.origin ||
+                !(numberValue('slam_pixels_per_um', NaN) > 0)) {
+            notify('请先准备显微镜画面、标定原点和 px/μm 比例', 'warning');
+            return false;
+        }
+        if (!state.jobId || !Array.isArray(state.jobFrames) || !state.jobFrames.length) {
+            notify('请先生成一版路径相位帧，再进行位置反馈校准', 'warning');
+            return false;
+        }
+        if (!jobCalibrationMatchesCurrent()) {
+            notify('当前坐标标定与这组相位帧不一致，请先重新生成路径相位帧', 'warning');
+            return false;
+        }
+        if (state.mediaStream) stopLiveMicroscope();
+        state.roiMode = false;
+        state.scaleMode = false;
+        state.originMode = false;
+        ['slam_roi_button', 'slam_scale_button', 'slam_origin_button'].forEach(id => {
+            const modeButton = byId(id);
+            if (modeButton) {
+                modeButton.classList.remove('is-active');
+                modeButton.setAttribute('aria-pressed', 'false');
+            }
+        });
+        state.feedbackMode = true;
+        state.feedbackMeasurements = [null, null, null];
+        const button = byId('slam_feedback_mode_btn');
+        if (button) {
+            button.classList.add('is-active');
+            button.setAttribute('aria-pressed', 'true');
+        }
+        setFeedbackReport(
+            `已冻结画面。选择右侧光斑 ${state.activeSpot + 1}，在左侧点选对应亮斑附近；完成三个光斑后应用补偿。`,
+            'info'
+        );
+        setStatus(`正在校准第 ${state.previewIndex + 1} 帧的光斑位置`, 'info');
+        updateFeedbackButtons();
+        drawMicroscope();
+        return true;
+    }
+
+    function recordSpotMeasurement(spotIndex, measuredPoint, quality = {}) {
+        if (!Number.isInteger(spotIndex) || spotIndex < 0 || spotIndex >= 3) {
+            throw new Error('光斑编号无效');
+        }
+        const frame = state.jobFrames[state.previewIndex];
+        const target = frame && Array.isArray(frame.spots) && frame.spots[spotIndex];
+        if (!target || !finitePoint(target) || !measuredPoint ||
+                !Number.isFinite(Number(measuredPoint.x_px)) ||
+                !Number.isFinite(Number(measuredPoint.y_px))) {
+            throw new Error('当前帧缺少可用的目标或实测光斑位置');
+        }
+        const measured = sampleToFocusUm(Number(measuredPoint.x_px), Number(measuredPoint.y_px));
+        if (!measured) throw new Error('像素标定无效，无法换算实测光斑位置');
+        const measurement = {
+            x_px: Number(measuredPoint.x_px),
+            y_px: Number(measuredPoint.y_px),
+            frame_index: state.previewIndex,
+            error_x_um: measured.x_um - Number(target.x_um),
+            error_y_um: measured.y_um - Number(target.y_um),
+            confidence: Number.isFinite(Number(quality.confidence)) ? Number(quality.confidence) : null,
+            area_px: Number.isFinite(Number(quality.area_px)) ? Number(quality.area_px) : null
+        };
+        state.feedbackMeasurements[spotIndex] = measurement;
+        const lines = state.feedbackMeasurements.map((item, index) => item
+            ? `光斑 ${index + 1}：偏差 (${item.error_x_um.toFixed(3)}, ${item.error_y_um.toFixed(3)}) μm`
+            : `光斑 ${index + 1}：待测量`);
+        setFeedbackReport(lines.join('\n'), 'info');
+        updateFeedbackButtons();
+        drawMicroscope();
+        return { ...measurement };
+    }
+
+    function measureSpotAt(point) {
+        const vision = window.SLAMSpotVision;
+        if (!vision || typeof vision.estimateBrightSpot !== 'function') {
+            throw new Error('光斑检测模块尚未加载');
+        }
+        const radius = numberValue('slam_detection_radius_px', 16);
+        if (!Number.isInteger(radius) || radius < 3 || radius > 128) {
+            throw new Error('局部搜索半径须为 3–128 px');
+        }
+        const roi = state.roi || { x: 0, y: 0, width: imageWidth(), height: imageHeight() };
+        const sourceX = roi.x + point.x_px;
+        const sourceY = roi.y + point.y_px;
+        const sourceLeft = Math.floor(sourceX) - radius;
+        const sourceTop = Math.floor(sourceY) - radius;
+        const patchSize = radius * 2 + 1;
+        if (sourceLeft < 0 || sourceTop < 0 || sourceLeft + patchSize > imageWidth() ||
+                sourceTop + patchSize > imageHeight()) {
+            throw new Error('点选位置太靠近图像边缘，请移到光斑附近重新点选');
+        }
+        const patch = document.createElement('canvas');
+        patch.width = patchSize;
+        patch.height = patchSize;
+        const context = patch.getContext('2d', { willReadFrequently: true });
+        context.drawImage(state.image, sourceLeft, sourceTop, patchSize, patchSize,
+            0, 0, patchSize, patchSize);
+        const imageData = context.getImageData(0, 0, patchSize, patchSize);
+        const detected = vision.estimateBrightSpot(
+            imageData, sourceX - sourceLeft, sourceY - sourceTop, radius
+        );
+        const sourcePoint = {
+            x_px: sourceLeft + detected.x_px - roi.x,
+            y_px: sourceTop + detected.y_px - roi.y
+        };
+        return recordSpotMeasurement(state.activeSpot, sourcePoint, detected);
+    }
+
+    function applySpotFeedback() {
+        if (!state.feedbackMeasurements.every(item =>
+            item && item.frame_index === state.previewIndex)) {
+            throw new Error('请在同一帧中完成三个光斑的测量');
+        }
+        const gain = numberValue('slam_feedback_gain', 0.75);
+        if (!Number.isFinite(gain) || gain < 0.1 || gain > 1) {
+            throw new Error('补偿增益须在 0.1–1 之间');
+        }
+        state.feedbackMeasurements.forEach((measurement, index) => {
+            state.feedbackOffsets[index].x_um -= measurement.error_x_um * gain;
+            state.feedbackOffsets[index].y_um -= measurement.error_y_um * gain;
+        });
+        state.feedbackMode = false;
+        const button = byId('slam_feedback_mode_btn');
+        if (button) {
+            button.classList.remove('is-active');
+            button.setAttribute('aria-pressed', 'false');
+        }
+        const lines = state.feedbackOffsets.map((offset, index) =>
+            `光斑 ${index + 1} 累积补偿：(${offset.x_um.toFixed(3)}, ${offset.y_um.toFixed(3)}) μm`);
+        setFeedbackReport(lines.join('\n'), 'success');
+        setStatus('位置补偿已应用；重新生成相位帧以计算修正后的路径', 'success');
+        drawFocusPlot();
+        updateFeedbackButtons();
+        return state.feedbackOffsets.map(offset => ({ ...offset }));
+    }
+
+    function clearSpotFeedback() {
+        state.feedbackOffsets = [{ x_um: 0, y_um: 0 }, { x_um: 0, y_um: 0 }, { x_um: 0, y_um: 0 }];
+        state.feedbackMeasurements = [null, null, null];
+        state.feedbackMode = false;
+        const button = byId('slam_feedback_mode_btn');
+        if (button) {
+            button.classList.remove('is-active');
+            button.setAttribute('aria-pressed', 'false');
+        }
+        setFeedbackReport('位置补偿已清除', 'info');
+        drawFocusPlot();
+        drawMicroscope();
+        updateFeedbackButtons();
+    }
+
     function clickMicroscope(event) {
         const canvas = byId('slam_microscope_canvas');
         const point = canvas && sourcePointFromCanvas(canvas, event);
         if (!point) return;
+        if (state.suppressMicroscopeClick) {
+            state.suppressMicroscopeClick = false;
+            return;
+        }
+        if (state.feedbackMode) {
+            try {
+                const measurement = measureSpotAt(point);
+                setStatus(`光斑 ${state.activeSpot + 1} 已检测：偏差 ` +
+                    `(${measurement.error_x_um.toFixed(3)}, ${measurement.error_y_um.toFixed(3)}) μm`, 'success');
+            } catch (error) {
+                setFeedbackReport(error.message, 'error');
+                setStatus(`光斑检测失败：${error.message}`, 'warning');
+            }
+            return;
+        }
+        if (state.roiMode) return;
+        if (state.scaleMode) {
+            state.scalePoints.push(point);
+            if (state.scalePoints.length === 1) {
+                setStatus('已记录第一个标尺端点，请点击第二个端点', 'info');
+            } else {
+                const distancePx = Math.hypot(
+                    state.scalePoints[1].x_px - state.scalePoints[0].x_px,
+                    state.scalePoints[1].y_px - state.scalePoints[0].y_px
+                );
+                const referenceUm = numberValue('slam_reference_distance_um', NaN);
+                if (!(distancePx >= 1) || !(referenceUm > 0)) {
+                    state.scalePoints = [];
+                    setStatus('标定失败：端点距离至少 1 px，参考长度必须大于 0 μm', 'error');
+                } else {
+                    const pxPerUm = distancePx / referenceUm;
+                    resetFeedbackForCalibrationChange();
+                    const input = byId('slam_pixels_per_um');
+                    if (input) input.value = String(Number(pxPerUm.toPrecision(8)));
+                    state.scaleMode = false;
+                    state.scalePoints = [];
+                    const button = byId('slam_scale_button');
+                    if (button) {
+                        button.classList.remove('is-active');
+                        button.setAttribute('aria-pressed', 'false');
+                    }
+                    const output = byId('slam_scale_status');
+                    if (output) output.textContent = `${(1 / pxPerUm).toPrecision(6)} μm/px`;
+                    scaleCalibration();
+                    setStatus(`两点标定完成：${pxPerUm.toPrecision(6)} px/μm`, 'success');
+                }
+            }
+            drawMicroscope();
+            return;
+        }
         if (state.originMode) {
+            resetFeedbackForCalibrationChange();
             state.origin = point;
             state.originMode = false;
             const button = byId('slam_origin_button');
@@ -444,6 +784,148 @@
             renderMarkers();
         } else {
             addMaterialAt(point);
+        }
+    }
+
+    function canvasImagePoint(canvas, event) {
+        if (!state.image || !state.imageDrawRect) return null;
+        const bounds = canvas.getBoundingClientRect();
+        const px = (event.clientX - bounds.left) * canvas.width / bounds.width;
+        const py = (event.clientY - bounds.top) * canvas.height / bounds.height;
+        const rect = state.imageDrawRect;
+        if (px < rect.x || py < rect.y || px > rect.x + rect.width || py > rect.y + rect.height) return null;
+        const roi = state.roi || { x: 0, y: 0, width: imageWidth(), height: imageHeight() };
+        return {
+            x_px: Math.max(0, Math.min(roi.width, (px - rect.x) / rect.scale)),
+            y_px: Math.max(0, Math.min(roi.height, (py - rect.y) / rect.scale))
+        };
+    }
+
+    function finishRoiSelection(event) {
+        const canvas = byId('slam_microscope_canvas');
+        if (!state.roiMode || !canvas || !state.roiDragStart) return;
+        const end = canvasImagePoint(canvas, event);
+        const start = state.roiDragStart;
+        state.roiDragStart = null;
+        state.roiDragCurrent = null;
+        state.roiMode = false;
+        const roiButton = byId('slam_roi_button');
+        if (roiButton) {
+            roiButton.classList.remove('is-active');
+            roiButton.setAttribute('aria-pressed', 'false');
+        }
+        if (!end) {
+            setStatus('ROI 选择已取消', 'info');
+            drawMicroscope();
+            return;
+        }
+        const left = Math.floor(Math.min(start.x_px, end.x_px));
+        const top = Math.floor(Math.min(start.y_px, end.y_px));
+        const width = Math.floor(Math.abs(end.x_px - start.x_px));
+        const height = Math.floor(Math.abs(end.y_px - start.y_px));
+        if (width < 16 || height < 16) {
+            setStatus('ROI 区域至少需要 16×16 px', 'warning');
+            drawMicroscope();
+            return;
+        }
+        const previous = state.roi || { x: 0, y: 0 };
+        state.suppressMicroscopeClick = true;
+        state.roi = { x: previous.x + left, y: previous.y + top, width, height };
+        state.markers = [];
+        state.selectedMarkerId = null;
+        state.assignments = [null, null, null];
+        state.paths = [[], [], []];
+        state.origin = null;
+        state.imageDataUrl = null;
+        state.jobId = null;
+        state.jobCalibration = null;
+        state.jobFrames = [];
+        state.phaseUrls = [];
+        state.reconstructionUrls = [];
+        state.previewIndex = 0;
+        state.feedbackMode = false;
+        state.feedbackMeasurements = [null, null, null];
+        state.feedbackOffsets = [{ x_um: 0, y_um: 0 }, { x_um: 0, y_um: 0 }, { x_um: 0, y_um: 0 }];
+        assignControlsEnabled(false);
+        renderMarkers();
+        drawMicroscope();
+        setStatus(`ROI 已设为 ${width}×${height} px；请重新标记原点和材料`, 'success');
+    }
+
+    function stopLiveMicroscope() {
+        if (state.mediaFrameRequest) cancelAnimationFrame(state.mediaFrameRequest);
+        state.mediaFrameRequest = 0;
+        if (state.mediaStream) state.mediaStream.getTracks().forEach(track => track.stop());
+        state.mediaStream = null;
+        state.mediaSourceName = null;
+        const source = state.image;
+        if (source && source.tagName === 'VIDEO') {
+            const frozen = document.createElement('canvas');
+            frozen.width = source.videoWidth;
+            frozen.height = source.videoHeight;
+            frozen.getContext('2d').drawImage(source, 0, 0);
+            source.pause();
+            source.srcObject = null;
+            state.image = frozen;
+            state.imageDataUrl = null;
+        }
+        drawMicroscope();
+        updateLiveButtons();
+    }
+
+    function updateLiveButtons() {
+        const live = !!state.mediaStream;
+        const stop = byId('slam_camera_stop_btn');
+        if (stop) stop.disabled = !live;
+        ['slam_camera_start_btn', 'slam_screen_start_btn'].forEach(id => {
+            const button = byId(id);
+            if (button) button.disabled = live;
+        });
+    }
+
+    async function startLiveMicroscope(kind) {
+        if (!navigator.mediaDevices) {
+            notify('当前浏览器不支持实时媒体采集；请使用 HTTPS 或 localhost', 'error');
+            return;
+        }
+        stopLiveMicroscope();
+        try {
+            const stream = kind === 'screen'
+                ? await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30, max: 60 } }, audio: false })
+                : await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+            const video = document.createElement('video');
+            video.autoplay = true;
+            video.muted = true;
+            video.playsInline = true;
+            video.srcObject = stream;
+            await video.play();
+            await new Promise(resolve => {
+                if (video.videoWidth && video.videoHeight) resolve();
+                else video.addEventListener('loadedmetadata', resolve, { once: true });
+            });
+            state.mediaStream = stream;
+            state.mediaSourceName = kind;
+            state.image = video;
+            state.imageDataUrl = null;
+            state.liveImageCaptured = true;
+            state.roi = null;
+            state.markers = [];
+            state.origin = null;
+            state.assignments = [null, null, null];
+            state.paths = [[], [], []];
+            stream.getVideoTracks()[0]?.addEventListener('ended', stopLiveMicroscope, { once: true });
+            const renderFrame = () => {
+                if (!state.mediaStream || state.image !== video) return;
+                drawMicroscope();
+                state.mediaFrameRequest = requestAnimationFrame(renderFrame);
+            };
+            updateLiveButtons();
+            renderFrame();
+            setStatus(`${kind === 'screen' ? '屏幕共享' : '摄像头'}实时画面已连接：${video.videoWidth}×${video.videoHeight} px`, 'success');
+        } catch (error) {
+            setStatus(`无法启动实时画面：${error.message}`, 'error');
+            notify(`无法启动实时画面：${error.message}`, 'error');
+            updateLiveButtons();
         }
     }
 
@@ -503,15 +985,17 @@
         if (kind === 'microscope') {
             if (!state.image) return;
             if (!state.cursorImagePx) {
-                state.cursorImagePx = { x_px: state.image.naturalWidth / 2, y_px: state.image.naturalHeight / 2 };
+                const roi = state.roi || { width: imageWidth(), height: imageHeight() };
+                state.cursorImagePx = { x_px: roi.width / 2, y_px: roi.height / 2 };
             }
             const step = event.shiftKey ? 10 : 1;
             if (direction === 'ArrowLeft') state.cursorImagePx.x_px -= step;
             if (direction === 'ArrowRight') state.cursorImagePx.x_px += step;
             if (direction === 'ArrowUp') state.cursorImagePx.y_px -= step;
             if (direction === 'ArrowDown') state.cursorImagePx.y_px += step;
-            state.cursorImagePx.x_px = Math.max(0, Math.min(state.image.naturalWidth, state.cursorImagePx.x_px));
-            state.cursorImagePx.y_px = Math.max(0, Math.min(state.image.naturalHeight, state.cursorImagePx.y_px));
+            const roi = state.roi || { width: imageWidth(), height: imageHeight() };
+            state.cursorImagePx.x_px = Math.max(0, Math.min(roi.width, state.cursorImagePx.x_px));
+            state.cursorImagePx.y_px = Math.max(0, Math.min(roi.height, state.cursorImagePx.y_px));
             if (direction === 'Enter' || direction === ' ') clickMicroscope({
                 clientX: canvas.getBoundingClientRect().left +
                     (state.imageDrawRect.x + state.cursorImagePx.x_px * state.imageDrawRect.scale) /
@@ -550,8 +1034,64 @@
         const microscope = byId('slam_microscope_canvas');
         if (microscope) {
             microscope.addEventListener('click', clickMicroscope);
+            microscope.addEventListener('pointerdown', event => {
+                if (!state.roiMode) return;
+                const point = canvasImagePoint(microscope, event);
+                if (!point) return;
+                state.roiDragStart = point;
+                state.roiDragCurrent = point;
+                microscope.setPointerCapture(event.pointerId);
+                drawMicroscope();
+            });
+            microscope.addEventListener('pointermove', event => {
+                if (!state.roiMode || !state.roiDragStart) return;
+                state.roiDragCurrent = canvasImagePoint(microscope, event);
+                if (state.roiDragCurrent) drawMicroscope();
+            });
+            microscope.addEventListener('pointerup', finishRoiSelection);
+            microscope.addEventListener('pointercancel', finishRoiSelection);
             microscope.addEventListener('keydown', event => keyboardCanvasAction(microscope, event, 'microscope'));
         }
+
+        const cameraStart = byId('slam_camera_start_btn');
+        if (cameraStart) cameraStart.addEventListener('click', () => startLiveMicroscope('camera'));
+        const screenStart = byId('slam_screen_start_btn');
+        if (screenStart) screenStart.addEventListener('click', () => startLiveMicroscope('screen'));
+        const cameraStop = byId('slam_camera_stop_btn');
+        if (cameraStop) cameraStop.addEventListener('click', stopLiveMicroscope);
+        const roiButton = byId('slam_roi_button');
+        if (roiButton) roiButton.addEventListener('click', () => {
+            if (!state.image) {
+                notify('请先启动实时画面或导入显微镜图像', 'warning');
+                return;
+            }
+            state.roiMode = !state.roiMode;
+            state.roiDragStart = null;
+            state.roiDragCurrent = null;
+            roiButton.classList.toggle('is-active', state.roiMode);
+            roiButton.setAttribute('aria-pressed', String(state.roiMode));
+            setStatus(state.roiMode ? '在画面中拖拽选择 ROI 区域' : '已退出 ROI 选择', 'info');
+        });
+        const scaleButton = byId('slam_scale_button');
+        if (scaleButton) scaleButton.addEventListener('click', () => {
+            if (!state.image) {
+                notify('请先启动实时画面或导入显微镜图像', 'warning');
+                return;
+            }
+            const reference = numberValue('slam_reference_distance_um', NaN);
+            if (!(reference > 0)) {
+                notify('请输入大于 0 的标尺实际长度', 'warning');
+                return;
+            }
+            state.scaleMode = !state.scaleMode;
+            state.scalePoints = [];
+            scaleButton.classList.toggle('is-active', state.scaleMode);
+            scaleButton.setAttribute('aria-pressed', String(state.scaleMode));
+            const output = byId('slam_scale_status');
+            if (output && state.scaleMode) output.textContent = '等待点击标尺两端点';
+            setStatus(state.scaleMode ? '在 ROI 画面依次点击已知标尺的两个端点' : '已退出两点标定', 'info');
+            drawMicroscope();
+        });
         const focus = byId('slam_focus_canvas');
         if (focus) {
             focus.addEventListener('click', clickFocusPlot);
@@ -572,12 +1112,22 @@
 
         const scaleInput = byId('slam_pixels_per_um');
         if (scaleInput) {
-            scaleInput.addEventListener('input', scaleCalibration);
-            scaleInput.addEventListener('change', scaleCalibration);
+            const updateScale = () => {
+                resetFeedbackForCalibrationChange();
+                scaleCalibration();
+                const value = numberValue('slam_pixels_per_um', NaN);
+                const output = byId('slam_scale_status');
+                if (output) output.textContent = value > 0
+                    ? `手动比例：${(1 / value).toPrecision(6)} μm/px`
+                    : '未完成距离标定';
+            };
+            scaleInput.addEventListener('input', updateScale);
+            scaleInput.addEventListener('change', updateScale);
         }
         ['slam_focus_scale_x', 'slam_focus_scale_y'].forEach(id => {
             const input = byId(id);
             if (input) input.addEventListener('input', () => {
+                resetFeedbackForCalibrationChange();
                 drawFocusPlot();
                 renderMarkers();
             });
@@ -596,7 +1146,9 @@
             if (!Number.isInteger(index) || index < 0 || index >= 3) return;
             state.activeSpot = index;
             syncSpotTabs();
-            if (state.selectedMarkerId) assignSelectedMaterial(index);
+            if (state.feedbackMode) {
+                setStatus(`选择光斑 ${index + 1}，然后在显微镜画面点选对应亮斑`, 'info');
+            } else if (state.selectedMarkerId) assignSelectedMaterial(index);
             else drawFocusPlot();
         });
 
@@ -614,6 +1166,28 @@
         if (addCgh) addCgh.addEventListener('click', addSLAMFramesToCGH);
         const exportButton = byId('slam_export_btn');
         if (exportButton) exportButton.addEventListener('click', downloadExport);
+        const feedbackMode = byId('slam_feedback_mode_btn');
+        if (feedbackMode) feedbackMode.addEventListener('click', () => {
+            if (state.feedbackMode) {
+                state.feedbackMode = false;
+                feedbackMode.classList.remove('is-active');
+                feedbackMode.setAttribute('aria-pressed', 'false');
+                setFeedbackReport('光斑测量已取消；已应用的补偿保留。', 'info');
+                updateFeedbackButtons();
+            } else {
+                beginSpotFeedback();
+            }
+        });
+        const applyFeedback = byId('slam_apply_feedback_btn');
+        if (applyFeedback) applyFeedback.addEventListener('click', () => {
+            try {
+                applySpotFeedback();
+            } catch (error) {
+                setFeedbackReport(error.message, 'error');
+            }
+        });
+        const clearFeedback = byId('slam_clear_feedback_btn');
+        if (clearFeedback) clearFeedback.addEventListener('click', clearSpotFeedback);
         const upload = byId('slam_upload_btn');
         if (upload) upload.addEventListener('click', uploadToSLM);
         const previous = byId('slam_preview_prev');
@@ -662,8 +1236,11 @@
     async function loadImageDataUrl(dataUrl) {
         try {
             const image = await decodeImageDataUrl(dataUrl);
+            stopLiveMicroscope();
             state.image = image;
             state.imageDataUrl = dataUrl;
+            state.liveImageCaptured = false;
+            state.roi = null;
             state.markers = [];
             state.selectedMarkerId = null;
             state.origin = null;
@@ -671,9 +1248,14 @@
             state.assignments = [null, null, null];
             state.paths = [[], [], []];
             state.jobId = null;
+            state.jobCalibration = null;
+            state.jobFrames = [];
             state.phaseUrls = [];
             state.reconstructionUrls = [];
             state.previewIndex = 0;
+            state.feedbackMode = false;
+            state.feedbackMeasurements = [null, null, null];
+            state.feedbackOffsets = [{ x_um: 0, y_um: 0 }, { x_um: 0, y_um: 0 }, { x_um: 0, y_um: 0 }];
             state.cursorImagePx = { x_px: image.naturalWidth / 2, y_px: image.naturalHeight / 2 };
             assignControlsEnabled(false);
             setProgress(0, '已导入显微镜图像');
@@ -713,7 +1295,10 @@
         const paths = state.paths.map((waypoints, index) => ({
             id: `spot-${index + 1}`,
             material_id: state.assignments[index],
-            waypoints: waypoints.map(point => ({ x_um: point.x_um, y_um: point.y_um }))
+            waypoints: waypoints.map(point => ({
+                x_um: point.x_um + state.feedbackOffsets[index].x_um,
+                y_um: point.y_um + state.feedbackOffsets[index].y_um
+            }))
         }));
         return {
             calibration: {
@@ -751,9 +1336,14 @@
         }
         state.generating = true;
         state.jobId = null;
+        state.jobCalibration = null;
+        state.jobFrames = [];
         state.phaseUrls = [];
         state.reconstructionUrls = [];
         state.previewIndex = 0;
+        state.feedbackMode = false;
+        state.feedbackMeasurements = [null, null, null];
+        updateFeedbackButtons();
         assignControlsEnabled(false);
         activeInputsDisabled(true);
         setProgress(0, '正在提交路径规划…');
@@ -788,6 +1378,8 @@
             }
             state.phaseUrls = normalizeUrls(finished, 'phase_urls', state.jobId);
             state.reconstructionUrls = normalizeUrls(finished, 'reconstruction_urls', state.jobId);
+            state.jobFrames = Array.isArray(finished.frames) ? finished.frames : [];
+            state.jobCalibration = { ...payload.calibration };
             if (!state.phaseUrls.length) {
                 state.phaseUrls = Array.from({ length: frameCount }, (_, index) =>
                     `/api/slam/motion/jobs/${encodeURIComponent(state.jobId)}/frames/${index}/phase`);
@@ -826,7 +1418,18 @@
 
     function showPreview(index) {
         if (!state.phaseUrls.length) return;
-        state.previewIndex = Math.max(0, Math.min(state.phaseUrls.length - 1, Number(index) || 0));
+        const nextIndex = Math.max(0, Math.min(state.phaseUrls.length - 1, Number(index) || 0));
+        if (nextIndex !== state.previewIndex) {
+            state.feedbackMode = false;
+            state.feedbackMeasurements = [null, null, null];
+            const feedbackButton = byId('slam_feedback_mode_btn');
+            if (feedbackButton) {
+                feedbackButton.classList.remove('is-active');
+                feedbackButton.setAttribute('aria-pressed', 'false');
+            }
+            setFeedbackReport('帧已切换，请针对当前帧重新测量三个光斑。', 'info');
+        }
+        state.previewIndex = nextIndex;
         const phase = byId('slam_phase_preview');
         const reconstruction = byId('slam_recon_preview');
         if (phase) phase.src = state.phaseUrls[state.previewIndex];
@@ -841,6 +1444,7 @@
         const next = byId('slam_preview_next');
         if (previous) previous.disabled = state.previewIndex === 0;
         if (next) next.disabled = state.previewIndex === state.phaseUrls.length - 1;
+        updateFeedbackButtons();
     }
 
     async function addSLAMFramesToCGH() {
@@ -873,21 +1477,41 @@
         }
     }
 
-    function downloadExport() {
-        if (!state.jobId) return;
+    async function downloadExport() {
+        if (!state.jobId || state.exporting) return;
         const url = `/api/slam/motion/jobs/${encodeURIComponent(state.jobId)}/export.zip`;
         const button = byId('slam_export_btn');
-        if (button && button.tagName === 'A') {
-            button.href = url;
-            button.download = `slam_motion_${state.jobId}.zip`;
-            return;
+        state.exporting = true;
+        if (button) button.disabled = true;
+        setStatus('正在准备相位序列 ZIP…', 'info');
+        try {
+            const response = await fetch(url);
+            if (!response.ok) {
+                let message = `HTTP ${response.status}`;
+                try {
+                    const data = await response.json();
+                    if (data.error) message = data.error;
+                } catch (_) {}
+                throw new Error(message);
+            }
+            const archive = await response.blob();
+            if (!archive.size) throw new Error('服务端返回了空 ZIP 文件');
+            const objectUrl = URL.createObjectURL(archive);
+            const link = document.createElement('a');
+            link.href = objectUrl;
+            link.download = `slam_motion_${state.jobId}.zip`;
+            document.body.append(link);
+            link.click();
+            link.remove();
+            setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+            setStatus('相位序列 ZIP 已开始下载', 'success');
+        } catch (error) {
+            setStatus(`导出 ZIP 失败：${error.message}`, 'error');
+            notify(`导出 ZIP 失败：${error.message}`, 'error');
+        } finally {
+            state.exporting = false;
+            if (button) button.disabled = false;
         }
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `slam_motion_${state.jobId}.zip`;
-        document.body.append(link);
-        link.click();
-        link.remove();
     }
 
     async function uploadToSLM() {
@@ -941,7 +1565,8 @@
         ['slam_pixels_per_um', 'slam_focal_um', 'slam_wavelength_nm', 'slam_magnification',
             'slam_beam_diameter_mm', 'slam_spot_diameter_um', 'slam_width', 'slam_height',
             'slam_speed_um_s', 'slam_frame_interval_ms', 'slam_iterations',
-            'slam_focus_scale_x', 'slam_focus_scale_y', 'slam_focus_field_um'].forEach(id => {
+            'slam_focus_scale_x', 'slam_focus_scale_y', 'slam_focus_field_um',
+            'slam_detection_radius_px', 'slam_feedback_gain'].forEach(id => {
             const input = byId(id);
             if (input) params[id] = input.value;
         });
@@ -949,14 +1574,33 @@
             const input = byId(id);
             if (input) params[id] = input.value;
         });
+        let imageDataUrl = state.imageDataUrl;
+        if (state.image && (state.liveImageCaptured || state.roi)) {
+            const roi = state.roi || { x: 0, y: 0, width: imageWidth(), height: imageHeight() };
+            if (roi.width * roi.height > MAX_IMAGE_PIXELS) {
+                throw new Error('实时画面 ROI 超过 16 MP，缩小 ROI 后再保存项目');
+            }
+            const snapshot = document.createElement('canvas');
+            snapshot.width = roi.width;
+            snapshot.height = roi.height;
+            snapshot.getContext('2d').drawImage(
+                state.image, roi.x, roi.y, roi.width, roi.height,
+                0, 0, roi.width, roi.height
+            );
+            imageDataUrl = snapshot.toDataURL('image/png');
+            if (imageDataUrl.length > MAX_IMAGE_BYTES * 1.4) {
+                throw new Error('实时显微镜截图超过 32 MiB 项目图像限制');
+            }
+        }
         return {
             version: 1,
-            image_data_url: state.imageDataUrl,
+            image_data_url: imageDataUrl,
             markers: state.markers.map(marker => ({ ...marker })),
             selected_marker_id: state.selectedMarkerId,
             origin: state.origin ? { ...state.origin } : null,
             assignments: [...state.assignments],
             paths: state.paths.map(path => path.map(point => ({ ...point }))),
+            feedback_offsets_um: state.feedbackOffsets.map(offset => ({ ...offset })),
             parameters: params
         };
     }
@@ -991,6 +1635,17 @@
         });
         const assignments = project.assignments.map(id =>
             id === null || markers.some(marker => marker.id === id) ? id : null);
+        const feedbackOffsets = project.feedback_offsets_um === undefined
+            ? [{ x_um: 0, y_um: 0 }, { x_um: 0, y_um: 0 }, { x_um: 0, y_um: 0 }]
+            : project.feedback_offsets_um;
+        if (!Array.isArray(feedbackOffsets) || feedbackOffsets.length !== 3 ||
+                !feedbackOffsets.every(offset => offset &&
+                    Number.isFinite(Number(offset.x_um)) && Number.isFinite(Number(offset.y_um)))) {
+            throw new Error('项目光斑位置补偿数据无效');
+        }
+        const normalizedFeedbackOffsets = feedbackOffsets.map(offset => ({
+            x_um: Number(offset.x_um), y_um: Number(offset.y_um)
+        }));
         const origin = project.origin && Number.isFinite(Number(project.origin.x_px)) &&
             Number.isFinite(Number(project.origin.y_px)) &&
             Number(project.origin.x_px) >= 0 && Number(project.origin.y_px) >= 0
@@ -1011,18 +1666,26 @@
             }
         }
 
+        stopLiveMicroscope();
         state.image = restoredImage;
         state.imageDataUrl = project.image_data_url || null;
+        state.liveImageCaptured = false;
+        state.roi = null;
         state.markers = markers;
         state.selectedMarkerId = markers.some(marker => marker.id === project.selected_marker_id)
             ? project.selected_marker_id : null;
         state.origin = origin;
         state.assignments = assignments;
         state.paths = paths;
+        state.feedbackOffsets = normalizedFeedbackOffsets;
         state.jobId = null;
+        state.jobCalibration = null;
+        state.jobFrames = [];
         state.phaseUrls = [];
         state.reconstructionUrls = [];
         state.previewIndex = 0;
+        state.feedbackMode = false;
+        state.feedbackMeasurements = [null, null, null];
         state.activeSpot = 0;
         Object.entries(project.parameters || {}).forEach(([id, value]) => {
             const input = byId(id);
@@ -1072,7 +1735,11 @@
         generateJob,
         showPreview,
         addSLAMFramesToCGH,
-        sampleToFocusUm
+        sampleToFocusUm,
+        beginSpotFeedback,
+        recordSpotMeasurement,
+        applySpotFeedback,
+        clearSpotFeedback
     };
 
     if (document.readyState === 'loading') {
