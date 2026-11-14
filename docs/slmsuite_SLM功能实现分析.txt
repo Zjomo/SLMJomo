@@ -1,0 +1,237 @@
+slmsuite 项目：SLM 空间光调制器功能实现汇总
+============================================================
+
+一、分析范围
+------------------------------------------------------------
+分析对象：QPG-MIT/slmsuite
+项目地址：https://github.com/QPG-MIT/slmsuite
+本次检查的仓库快照：commit 319a5c58bb25a40f6a63a03f16961f1dd108bf19
+该快照提交日期：2025-12-17
+项目包版本：0.3.0（setup.py）
+许可证：MIT
+分析日期：2026-11-13
+
+说明：下文根据本次成功克隆的源码和随仓库提供的文档整理。尝试重新查询远端 main 分支时遇到 TLS 连接错误，因此不能确认远端在该快照之后是否又有更新。文档示例索引链接到独立的 slmsuite-examples 仓库；本报告不把该外部仓库中的示例误当成本仓库内实现。
+
+
+二、项目定位与总体结构
+------------------------------------------------------------
+slmsuite 是一个 Python 科学计算和实验控制库，目标是把 SLM 近场相位/振幅设计、全息算法、相机测量、标定和物理设备写入连接起来。它是 API/脚本/Jupyter 工作流，不是一个带完整流程编排的桌面或 Web 控制面板。
+
+主要包结构：
+  slmsuite/hardware/slms/       SLM 通用抽象和各厂商/显示器驱动
+  slmsuite/hardware/cameras/    相机通用抽象和相机 SDK 适配器
+  slmsuite/hardware/cameraslms.py
+                                相机与 SLM 配对、坐标标定、波前标定
+  slmsuite/hardware/remote.py  通过 TCP 在远端主机访问硬件
+  slmsuite/holography/algorithms/
+                                全息图生成与优化
+  slmsuite/holography/toolbox/ 全息坐标换算、相位图和网格工具
+  slmsuite/holography/analysis/
+                                相机图像、光斑、相位图分析
+  slmsuite/misc/                数学、拟合和文件工具
+
+典型实验数据流：
+  定义远场目标或目标光斑
+      -> GS/WGS/CG 等算法求近场相位
+      -> SLM 对象将相位修正、量化为设备灰度并写到设备
+      -> 相机采集衍射焦平面图像
+      -> FourierSLM 标定把 SLM 空间频率坐标映射到相机像素
+      -> 图像分析计算光斑位置、强度、尺寸、误差等
+      -> 反馈优化或波前校准后再次生成/显示
+
+
+三、SLM 通用控制能力
+------------------------------------------------------------
+核心文件：slmsuite/hardware/slms/slm.py，核心类 SLM。
+
+SLM 基类统一管理设备名称、宽高分辨率、像元间距、位深、工作波长、设计波长、相位缩放系数、显示缓存和默认稳定等待时间。内部图像采用 shape=(height,width)，设备分辨率参数采用 (width,height)；相位/向量使用习惯与数组行列顺序不同，调用时需留意。
+
+主要能力：
+  1. set_phase(phase)：写入浮点相位、与设备位深匹配的整数灰度、Hologram 对象或空相位。对浮点相位可叠加 source 中保存的入射波前相位校正，然后按设备位深和相位范围换算灰度，经厂商子类的 _set_phase_hw() 发送到硬件；可按 settle 参数等待稳定。
+  2. 处理图像尺寸：可对大于 SLM 的输入做居中裁剪/解填充；整数输入有类型和位深检查。
+  3. 相位与灰度：统一处理相位缩放、周期折返、位深量化。厂商 LUT 或厂商相位校正仍需要相应设备驱动处理。
+  4. 相位文件：save_phase/load_phase 保存、读取 HDF5 相位及显示数据。
+  5. 入射光建模：set_source_analytic、fit_source_amplitude 等用于生成或拟合入射光束振幅/相位模型。
+  6. 诊断：绘制相位/光源分布，估算点扩散函数、光斑半径等。
+  7. 厂商校正：基类提供加载 vendor phase correction 的接口；不同厂商子类对格式和处理方式有差异。
+
+SLM 基类主要提供单帧 set_phase 抽象；实际显示由具体驱动完成。它本身不是通用视频编码、帧队列或硬件时序播放系统。
+
+
+四、仓库中实现的 SLM 驱动
+------------------------------------------------------------
+1. Meadowlark：slmsuite/hardware/slms/meadowlark.py
+   使用 Meadowlark Blink SDK；适配新旧/不同连接模式的 SDK DLL，获取设备分辨率、位深、像元间距等信息；支持写显示图、加载 LUT，以及读取版本、温度、coverglass 电压等状态。代码中的硬件触发等待目前关闭，注释明确表示触发模式尚待实现。8 位以上设备/路径需结合具体 SDK 和设备验证。
+
+2. Holoeye：slmsuite/hardware/slms/holoeye.py
+   使用 HEDS 4.0 Python SDK，提供设备选择、参数读取和相位图写入；可将厂商波前校正文件交给 SDK 加载。需要安装 Holoeye 厂商 SDK。直接交给 SDK 的厂商校正与基类 source['phase'] 叠加路径并非同一条实现路径。
+
+3. Hamamatsu：slmsuite/hardware/slms/hamamatsu.py
+   通过 hpk SLM DLL 控制；实现写入指定 frame memory slot、切换当前显示 slot，以及读取显示数据、温度、LED/模式等状态操作。接口默认单设备和 8-bit，源码说明目前只支持连接一个设备。代码中标有接口尚未测试等限制；microSD 读写不支持。slot 是设备专有能力，不代表其他厂商也支持同样的帧播放接口。
+
+4. Santec：slmsuite/hardware/slms/santec.py
+   通过 USB/DLL 接口写入 SLM-200/210/300 系列相位图；设置工作波长/相位表，读取温度、错误和状态；可加载厂商波前校正或 CSV 图像。依赖厂商 DLL。源码中的触发及内存功能位于注释/待实现部分，不能视为当前可用能力。
+
+5. ScreenMirrored：slmsuite/hardware/slms/screenmirrored.py
+   通用屏幕镜像型 SLM：使用 pyglet/OpenGL 在指定显示器打开窗口并刷新相位图，适用于通过显卡输出接收图像的 SLM。依赖操作系统显示器配置；当前限制为 8-bit 或以下。源码提示当前在非默认显示器等场景存在限制，Windows 屏幕睡眠、窗口遮挡等也可能影响投影。
+
+6. SimulatedSLM：slmsuite/hardware/slms/simulated.py
+   虚拟 SLM，不连接物理设备；可设置仿真的入射振幅和相位，供传播模拟与算法开发使用。
+
+7. RemoteSLM：slmsuite/hardware/slms/remote.py
+   连接到远端 slmsuite Server；初始化时获取设备属性，写入命令通过远程接口转发。客户端文档明确说明厂商专有功能需在服务器端执行，客户端属性不会自动保持远端最新状态。
+
+8. Template：slmsuite/hardware/slms/template.py
+   新设备驱动模板，指导用户继承 SLM 并实现底层设备写入和关闭等接口。
+
+9. Thorlabs SLM：slmsuite/hardware/slms/thorlabs.py
+   当前文件仅提示使用 ScreenMirrored；本快照未见独立的 Thorlabs SLM SDK 驱动类。不能因为存在 Thorlabs 相机驱动而推断存在 Thorlabs SLM 直连驱动。
+
+
+五、相机、设备组合与坐标标定
+------------------------------------------------------------
+相机通用类：slmsuite/hardware/cameras/camera.py，类 Camera。
+
+通用相机能力包括：曝光时间读取/设置、WOI（相机硬件采集窗口）设置、图像及连续多帧采集、超时处理/刷新、图像旋转和翻转、图像缓存与绘图、平均图像、多曝光 HDR、自动曝光、基于外部 Z 扫描回调的自动对焦、Jupyter live 预览。这里的 WOI 是相机 SDK 采集区域设置，不等于网页里的鼠标 ROI 选区工具。
+
+仓库提供的相机适配器：
+  Basler、Allied Vision、FLIR、The Imaging Source、Instrumental、MindVision、Micro-Manager、PyLabLib、Thorlabs、Xenics、系统 Webcam；另有 Simulated、Remote 和 Template。每种相机通常需要独立厂商 SDK、DLL 或可选 Python 包。能否连接实体设备取决于对应 SDK、设备型号和运行平台。
+
+相机与 SLM 的组合类：slmsuite/hardware/cameraslms.py。
+  CameraSLM：配对通用相机和 SLM，提供共用绘图等基础能力。
+  NearfieldSLM：用于非傅里叶成像几何，但源码文档标为 NotImplemented，不应当作已完成的标定实现。
+  FourierSLM：主要实验实现，面向 SLM 与相机之间存在傅里叶变换关系的光路；保存 Fourier、wavefront、pixel、settle 等标定数据，可模拟已校准的硬件组合。
+
+FourierSLM 的主要标定与映射：
+  1. settle_calibrate：扫等待时间并测量 SLM/光路的时间响应；settle_calibration_process 估算松弛时间并帮助选择 settle_time_s。
+  2. pixel_calibrate：用不同灰阶的二元光栅及衍射级强度，测量像元串扰和 V_pi 相关信息。文档将其标为实验功能；pixel_calibration_process 目前偏诊断/绘图用途，标定结果尚未接入全息传播和优化模型。
+  3. fourier_calibrate：在 SLM 计算傅里叶平面投射标定阵列，由相机检测光斑阵列并拟合 SLM k-space 到相机 ij 像素的仿射变换；可选择自动曝光、自动对焦和绘图。fourier_calibrate_analytic/fourier_calibration_build 可通过解析参数构造映射。
+  4. kxyslm_to_ijcam 与 ijcam_to_kxyslm：执行傅里叶焦平面光斑坐标与相机像素之间的双向转换；另有有效焦距、远场光斑尺寸估算。
+  5. wavefront_calibrate_zernike：在相机测量焦斑质量，通过逐项扰动 Zernike 像差并优化指定指标，估算波前校正；支持多个标定点、自定义 metric/callback 和位置/焦点/权重优化。
+  6. wavefront_calibrate_superpixel：把 SLM 分成方形超像素，并让各块与参考块在相机标定点处干涉，测量局部振幅和相位；可选择标定点、参考块、排除块、背景测量和相位步进。需先有 Fourier 标定。
+  7. wavefront_calibration_superpixel_process：过滤拟合质量较差的数据，做平滑、去背景、去载波/涡旋等处理，再形成可写入 source 的振幅/相位校正。超像素必须是方形；边缘尺寸不能整除时会裁切。多点插值等能力不能按完整自动连续插值来假设。
+
+关键区别：FourierSLM 的标定是“SLM 远场/傅里叶坐标 <-> 相机像素”的光学系统映射；它不是普通显微镜图像上的通用 μm/px 两点标定，也没有显微镜画面鼠标 ROI 标定界面。
+
+
+六、计算全息与焦点阵列
+------------------------------------------------------------
+算法入口：slmsuite/holography/algorithms/。
+
+1. Hologram：核心 DFT/FFT 迭代优化类。输入远场目标振幅、SLM 形状、入射光振幅/初始相位等，优化近场相位；提供设定目标/权重、提取相位、预测远场、随机/二次相位初始化、去涡旋、统计和回调等功能。
+
+2. optimize() 现有方法：
+   GS：Gerchberg-Saxton 基础相位检索。
+   WGS-Leonardo、WGS-Kim、WGS-Nogrette、WGS-Wu、WGS-tanh：不同权重更新规则的 Weighted GS，适合改善多个焦点的均匀性。
+   CG：基于 PyTorch 自动微分和优化器的共轭梯度/梯度优化路径。需要安装 PyTorch；源码描述为实验性路径。部分 spot 专用反馈模式不兼容 CG。
+   MRAF：Mixed Region Amplitude Freedom。目标数组中的 NaN 可表示允许自由变化的噪声区，算法在该区不强制指定幅度；可用于在目标区域质量与非目标区域背景/衍射级之间折中。
+
+3. FeedbackHologram：将全息优化与 FourierSLM、真实相位显示、相机采集结合。反馈可以是计算反馈或相机实验反馈；支持相机图像转换到算法目标坐标后更新权重。实验反馈依赖正确的 Fourier 标定。
+
+4. SpotHologram：多焦点/焦点阵列专用类，可定义二维目标点、目标强度、空斑/噪声区域和相机 spot 统计/反馈；提供矩形阵列辅助方法。普通 DFT 频域坐标离散，目标会量化到附近 knm 像素。
+
+5. CompressedSpotHologram：针对稀疏焦点，仅计算目标 spot 对应变换，支持连续坐标或亚像素位置、每 spot 的 Zernike 像差模型，适用于空间像差不同的焦点阵列。存在 CuPy/CUDA 加速路径；代码文档对部分高维 Zernike/spot 场景标有 CPU 不支持或性能限制，不能视为所有配置都有相同回退能力。
+
+6. MultiplaneHologram：多个 Hologram 共用一张 SLM 相位，在多焦平面/多组目标之间联合优化；支持平面间权重及离焦模糊目标变换。文档指出多色全息基础设施尚未就绪；离焦扩展也可能降低优化稳定性。
+
+7. 质量指标和数据：算法统计包含衍射效率、焦点均匀性、误差等；支持迭代状态/统计图及 HDF5 状态保存/读取。开启大量统计会增加每轮耗时。
+
+GPU 与性能：核心迭代优先使用 CuPy/CUDA；无 CuPy 时通常退回 NumPy/SciPy CPU 路径，但会明显变慢。README/文档中的加速倍数是项目方说明，不是本报告针对当前机器重新测试的 benchmark。
+
+
+七、相位图、结构光和坐标工具
+------------------------------------------------------------
+相位生成位于 slmsuite/holography/toolbox/phase.py，常用工具包括：
+  blaze：线性相位光栅/偏转；sinusoid、binary：周期相位结构；
+  Bahtinov、quadrants：对焦/光路诊断图案；
+  lens、axicon：薄透镜和锥透镜；
+  Zernike：基函数、索引转换、孔径 mask、单项/求和/导数；
+  polynomial：多项式相位；
+  Laguerre-Gaussian、Hermite-Gaussian、Ince-Gaussian、Mathieu-Gaussian、Airy：结构光场/模式构造。
+
+slmsuite/holography/toolbox/__init__.py 另提供：
+  k-space、角度、频率、相机像素及物理长度等坐标/单位换算；
+  半径/矢量换算、窗口切片、Voronoi 区域、相位/数组 imprint；
+  网格变换、向量格式化、三点/仿射变换拟合；
+  Lloyd 点阵生成/优化、数组 padding 与 unpadding。
+
+这些工具可以合成诊断相位或为全息类准备输入；“有透镜/光栅数学函数”不代表项目有 GUI 参数面板或对所有设备自动上传播放。
+
+
+八、相机图像分析
+------------------------------------------------------------
+核心文件：slmsuite/holography/analysis/__init__.py。
+
+常见能力：
+  take：按给定点位与窗口从图像中积分/取样区域；
+  image_remove_field、image_normalize：背景场处理和归一化；
+  image_positions、image_centroids、image_variances、image_std：测量位置、质心、尺寸与统计量；
+  image_ellipticity、image_areas、image_ellipticity_angle：分析焦斑形状；
+  image_fit：Gaussian 或自定义二维函数拟合；image_zernike_fit：拟合相位/像差项；
+  blob_detect、blob_array_detect：检测亮斑及规则光斑阵列；fit_affine：拟合坐标关系；
+  image_vortices、image_remove_blaze、image_reduce_wraps：分析/处理包裹相位、涡旋和载波。
+
+相机可以提供实验数据和常见视觉测量算法，但仓库没有针对任意显微镜画面的材料识别、材料跟踪、三个指定光斑自动身份关联、鼠标 ROI 交互控件或通用实时目标追踪器。
+
+
+九、存储、远程控制、依赖与运行形态
+------------------------------------------------------------
+1. FourierSLM 标定、相位数据、算法统计等可用 HDF5 文件保存和加载。
+2. Remote Server/Client 支持远端相机和 SLM 对象；硬件写入通过网络传递，厂商专用方法需保留在服务器端。
+3. 必需依赖主要为 NumPy、SciPy、OpenCV、Matplotlib、h5py、tqdm；CuPy/CUDA、PyTorch 和各厂商相机/SLM SDK 是按需安装的可选依赖。
+4. README、API 文档和示例入口是主要使用说明。完整 notebooks/实验流程链接到 slmsuite-examples 外部仓库。
+5. 本次克隆中的 testing/ 仅看到 Basler 和 Allied Vision 相机测试/示例模块，未发现覆盖所有真实 SLM 型号的硬件集成测试套件。真实设备功能必须使用对应厂商 SDK 和硬件验证。
+
+
+十、实现边界与不可误读之处
+------------------------------------------------------------
+1. slmsuite 是科研编程库，不是开箱即用的 SLM Web UI/控制面板。
+2. FourierSLM 的相机标定与显微镜物平面 μm/px 标定是不同问题；NearfieldSLM 当前未实现。
+3. pixel_calibrate 的串扰结果尚未用于 hologram 优化的传播模型；settle_calibrate 属实验性测量流程。
+4. Meadowlark 和 Santec 驱动中的硬件触发/内存播放接口尚未作为完整功能实现；Hamamatsu 的 frame slot 是特定驱动功能。
+5. 本快照未发现跨设备统一的帧序列管理、通用视频/电影播放、USB_SLMControl 批量实时上传 API。通常由应用层逐帧调用 set_phase，或使用厂商自己的 slot/SDK 功能；实际刷新率、同步、帧缓存、播放稳定性依赖硬件。
+6. 实验反馈和波前校正依赖相机、SLM 与光路配置正确，不能只靠算法输入参数保证真实焦斑位置、亮度和尺寸。
+7. vendor LUT、位深、波长、像元间距、屏幕模式及相位方向等都是设备相关参数；仿真成功不能替代厂商硬件验证。
+
+
+十一、对 SLMJomo“三光斑独立运动”模块的参考
+------------------------------------------------------------
+可复用/可借鉴：
+  1. 用 SpotHologram 或 CompressedSpotHologram 表达二维独立光斑目标；在普通焦点数组中更精确地表示连续坐标时，评估 CompressedSpotHologram。
+  2. 借鉴 Hologram 的目标振幅/权重、MRAF 噪声区域、WGS 均匀化，以及算法统计与回调接口。
+  3. 借鉴 FourierSLM 的校准数据结构和相机反馈流程，但只用于符合傅里叶成像关系的远场坐标标定。
+  4. 借鉴 SLM.set_phase 的“相位修正 -> 灰度/LUT 映射 -> 硬件驱动写入”边界；设备专有上传和时序应由驱动适配器负责。
+  5. 借鉴 analysis.take、image_centroids、blob_detect 等函数实现局部光斑位置测量，但应在应用层固定每个目标光斑的 ROI/身份，并针对显微镜数据做噪声和误检处理。
+
+不能直接视为已有：
+  1. 显微镜实时取流中的 ROI 选择与 μm/px 两点量纲标定。
+  2. 仅提取三个目标光斑并保持材料/光斑身份的实时跟踪闭环。
+  3. 三光斑独立路径规划、帧数/帧间隔管理、电影式播放 UI。
+  4. USB_SLMControl 通用实时批量上传或任意 SLM 的硬件序列播放。
+
+因此，slmsuite 最适合作为“光斑目标的 CGH 优化、实验标定与相机反馈算法参考/底层库”，而不是直接替代 SLMJomo 当前的显微镜标定、运动路径编排、任务持久化和设备序列上传模块。
+
+
+十二、源码与文档索引
+------------------------------------------------------------
+项目总览与能力声明：README.md、README_PYPI.md
+API 架构与坐标约定：docs/source/api.rst
+依赖和 SDK 清单：docs/source/installation.rst
+硬件使用提示：docs/source/tips.rst
+SLM 抽象：slmsuite/hardware/slms/slm.py
+SLM 厂商适配：slmsuite/hardware/slms/{meadowlark,holoeye,hamamatsu,santec,screenmirrored,simulated,remote,template}.py
+相机抽象和采集：slmsuite/hardware/cameras/camera.py
+相机适配：slmsuite/hardware/cameras/*.py
+相机-SLM 和标定：slmsuite/hardware/cameraslms.py
+全息算法：slmsuite/holography/algorithms/{_hologram,_feedback,_spots,_multiplane,_stats}.py
+相位工具：slmsuite/holography/toolbox/phase.py
+坐标/网格工具：slmsuite/holography/toolbox/__init__.py
+图像及相位分析：slmsuite/holography/analysis/__init__.py
+示例索引：docs/source/examples.rst（详细 notebook 位于外部 slmsuite-examples 仓库）
+
+官方项目和文档：
+  https://github.com/QPG-MIT/slmsuite
+  https://slmsuite.readthedocs.io/en/latest/
+  https://github.com/slmsuite/slmsuite-examples
+
