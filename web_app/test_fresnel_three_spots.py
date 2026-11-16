@@ -315,5 +315,167 @@ class FresnelThreeSpotTests(unittest.TestCase):
             )
 
 
+class SingleSpotTests(unittest.TestCase):
+    """三点聚焦模块支持仅保留 1 个光斑。"""
+
+    WIDTH = 512
+    HEIGHT = 512
+    PITCH_UM = 12.5
+    WAVELENGTH_NM = 532
+    FOCAL_LENGTH_MM = 1000
+    BEAM_DIAMETER_MM = 5.0
+
+    def _kwargs(self, **overrides):
+        params = dict(
+            width=self.WIDTH,
+            height=self.HEIGHT,
+            focal_length=self.FOCAL_LENGTH_MM,
+            wavelength=self.WAVELENGTH_NM,
+            pixel_size_um=self.PITCH_UM,
+            incident_beam_diameter_mm=self.BEAM_DIAMETER_MM,
+            iterations=20
+        )
+        params.update(overrides)
+        return params
+
+    def _assert_valid_pattern(self, phase):
+        self.assertEqual(phase.shape, (self.HEIGHT, self.WIDTH))
+        self.assertEqual(phase.dtype, np.uint8)
+        self.assertGreater(int(np.max(phase)), 0)
+        self.assertLess(int(np.min(phase)), 255)
+
+    def test_single_custom_spot_analytic(self):
+        phase = SLMPatternGenerator.fresnel_three_spots(
+            algorithm='analytic',
+            target_spots=[{'x_mm': 0.8, 'y_mm': -0.5, 'weight': 1.0}],
+            **self._kwargs()
+        )
+        self._assert_valid_pattern(phase)
+
+    def test_single_custom_spot_uniform_grating(self):
+        phase = SLMPatternGenerator.fresnel_three_spots(
+            algorithm='uniform_grating',
+            target_spots=[{'x_mm': -0.6, 'y_mm': 0.4, 'weight': 1.0}],
+            **self._kwargs()
+        )
+        self._assert_valid_pattern(phase)
+
+    def test_single_custom_spot_gaussian_wgs(self):
+        phase = SLMPatternGenerator.fresnel_three_spots(
+            algorithm='gaussian_wgs',
+            target_spots=[{'x_mm': 0.5, 'y_mm': 0.5, 'weight': 1.0}],
+            **self._kwargs()
+        )
+        self._assert_valid_pattern(phase)
+
+    def test_single_equal_spacing_spot(self):
+        for algorithm in ('analytic', 'uniform_grating'):
+            with self.subTest(algorithm=algorithm):
+                phase = SLMPatternGenerator.fresnel_three_spots(
+                    algorithm=algorithm,
+                    spot_count=1,
+                    spot_spacing=1.0,
+                    **self._kwargs()
+                )
+                self._assert_valid_pattern(phase)
+
+    def test_single_equal_spacing_no_lens(self):
+        """三点聚焦（无透镜）模块的等间距单光斑路径（with_lens=False）。
+
+        无透镜模式下单光斑即 0 阶衍射（光束直通），相位图为常数——
+        这是物理正确的结果，因此只校验形状/类型与常数性。
+        """
+        for algorithm in ('analytic', 'uniform_grating'):
+            with self.subTest(algorithm=algorithm):
+                phase = SLMPatternGenerator.fresnel_three_spots(
+                    algorithm=algorithm,
+                    spot_count=1,
+                    spot_spacing=1.0,
+                    with_lens=False,
+                    **self._kwargs()
+                )
+                self.assertEqual(phase.shape, (self.HEIGHT, self.WIDTH))
+                self.assertEqual(phase.dtype, np.uint8)
+                self.assertEqual(int(np.min(phase)), int(np.max(phase)),
+                                 '单光斑无透镜应为常数相位（0 阶直通）')
+
+    def test_single_custom_spot_no_lens(self):
+        phase = SLMPatternGenerator.fresnel_three_spots(
+            algorithm='gaussian_wgs',
+            with_lens=False,
+            target_spots=[{'x_mm': 0.4, 'y_mm': 0.2, 'weight': 1.0}],
+            **self._kwargs()
+        )
+        self._assert_valid_pattern(phase)
+
+    def test_single_spot_gaussian_wgs_focuses_energy_at_target(self):
+        """单光斑 WGS 优化后焦面能量应集中在目标位置附近。"""
+        target_x_mm, target_y_mm = 0.6, -0.4
+        wavelength_mm = self.WAVELENGTH_NM / 1e6
+        pixel_size_mm = self.PITCH_UM / 1000
+        output_step = wavelength_mm * self.FOCAL_LENGTH_MM / (
+            self.WIDTH * pixel_size_mm
+        )
+        output_x = (np.arange(self.WIDTH) - self.WIDTH // 2) * output_step
+        output_y = (np.arange(self.HEIGHT) - self.HEIGHT // 2) * output_step
+        beam_radius = self.BEAM_DIAMETER_MM / 2
+
+        phase = SLMPatternGenerator.fresnel_three_spots(
+            algorithm='gaussian_wgs',
+            with_lens=False,
+            target_spots=[
+                {'x_mm': target_x_mm, 'y_mm': target_y_mm, 'weight': 1.0}
+            ],
+            **self._kwargs()
+        )
+        x = (np.arange(self.WIDTH) - (self.WIDTH - 1) / 2) * pixel_size_mm
+        y = (np.arange(self.HEIGHT) - (self.HEIGHT - 1) / 2) * pixel_size_mm
+        X, Y = np.meshgrid(x, y)
+        illumination = np.exp(-(X**2 + Y**2) / beam_radius**2)
+        field = illumination * np.exp(1j * (phase.astype(float) / 255 * 2 * np.pi))
+        focal = np.abs(np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(field)))) ** 2
+
+        ix = int(np.argmin(np.abs(output_x - target_x_mm)))
+        iy = int(np.argmin(np.abs(output_y - target_y_mm)))
+        window = 9
+        peak_region = focal[
+            iy - window:iy + window + 1, ix - window:ix + window + 1
+        ]
+        self.assertGreater(
+            float(np.max(peak_region)), 0.5 * float(focal.max()),
+            '焦面能量应集中在目标光斑附近'
+        )
+
+    def test_dammann_rejects_single_spot(self):
+        with self.assertRaisesRegex(ValueError, '仅支持 3'):
+            SLMPatternGenerator.fresnel_three_spots(
+                spot_count=1,
+                algorithm='dammann',
+                **self._kwargs()
+            )
+
+    def test_empty_target_spots_rejected(self):
+        with self.assertRaisesRegex(ValueError, '光斑数量'):
+            SLMPatternGenerator.fresnel_three_spots(
+                algorithm='analytic',
+                target_spots=[],
+                **self._kwargs()
+            )
+
+    def test_normalize_accepts_single_spot(self):
+        spots = SLMPatternGenerator._normalize_target_spots(
+            [{'x_mm': 1.0, 'y_mm': 2.0, 'weight': 1.5}]
+        )
+        self.assertEqual(len(spots), 1)
+        self.assertEqual(spots[0]['x_mm'], 1.0)
+
+    def test_normalize_still_rejects_overlap_of_two(self):
+        with self.assertRaisesRegex(ValueError, '重叠'):
+            SLMPatternGenerator._normalize_target_spots([
+                {'x_mm': 1.0, 'y_mm': 1.0, 'weight': 1.0},
+                {'x_mm': 1.0, 'y_mm': 1.0, 'weight': 1.0}
+            ])
+
+
 if __name__ == '__main__':
     unittest.main()

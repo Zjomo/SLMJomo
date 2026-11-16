@@ -362,8 +362,8 @@ class SLMPatternGenerator:
         if target_spots is not None:
             target_spots = SLMPatternGenerator._normalize_target_spots(target_spots)
             spot_count = len(target_spots)
-        if not 2 <= spot_count <= 15:
-            raise ValueError("光斑数量必须在 2 到 15 之间")
+        if not 1 <= spot_count <= 15:
+            raise ValueError("光斑数量必须在 1 到 15 之间")
         if pixel_size_um <= 0:
             raise ValueError("像素尺寸必须大于 0 um")
         if algorithm not in (
@@ -508,8 +508,8 @@ class SLMPatternGenerator:
     def _normalize_target_spots(target_spots):
         if not isinstance(target_spots, (list, tuple)):
             raise ValueError("光斑坐标必须是二维数组")
-        if not 2 <= len(target_spots) <= 15:
-            raise ValueError("光斑数量必须在 2 到 15 之间")
+        if not 1 <= len(target_spots) <= 15:
+            raise ValueError("光斑数量必须在 1 到 15 之间")
 
         normalized = []
         for index, spot in enumerate(target_spots):

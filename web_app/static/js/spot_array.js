@@ -152,8 +152,8 @@ function validateSpotArrayProjectState(snapshot, controlValues = null) {
         return { reset: true, legacyAlgorithm: snapshot.legacyAlgorithm };
     }
 
-    if (!Array.isArray(snapshot.spots) || snapshot.spots.length < 2 || snapshot.spots.length > 15) {
-        throw new Error('项目中的光斑数量必须在 2 到 15 之间');
+    if (!Array.isArray(snapshot.spots) || snapshot.spots.length < 1 || snapshot.spots.length > 15) {
+        throw new Error('项目中的光斑数量必须在 1 到 15 之间');
     }
     const bounds = getSpotArrayOptics(controlValues);
     if (!bounds.x || !bounds.y || !bounds.waist) {
@@ -209,7 +209,7 @@ function updateSpotArraySelection() {
         option.selected = index === SpotArrayState.selectedIndex;
         return option;
     }));
-    document.getElementById('three_spot_remove').disabled = SpotArrayState.spots.length <= 2;
+    document.getElementById('three_spot_remove').disabled = SpotArrayState.spots.length <= 1;
     const selected = SpotArrayState.spots[SpotArrayState.selectedIndex];
     [['three_spot_x', selected?.x_mm], ['three_spot_y', selected?.y_mm],
         ['three_spot_weight', selected?.weight]].forEach(([id, value]) => {
@@ -296,7 +296,7 @@ function addArraySpot() {
 }
 
 function removeSelectedArraySpot() {
-    if (SpotArrayState.spots.length <= 2 || SpotArrayState.selectedIndex < 0) return;
+    if (SpotArrayState.spots.length <= 1 || SpotArrayState.selectedIndex < 0) return;
     SpotArrayState.spots.splice(SpotArrayState.selectedIndex, 1);
     SpotArrayState.selectedIndex = Math.min(
         SpotArrayState.selectedIndex,

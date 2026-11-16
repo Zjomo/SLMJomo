@@ -1397,7 +1397,7 @@ function toggleThreeSpotOptimization(prefix = 'three_spot') {
     }
 
     const targetPreview = document.getElementById(prefix + '_target');
-    if (targetPreview && Number.isInteger(spotCount) && spotCount >= 2 && spotCount <= 15) {
+    if (targetPreview && Number.isInteger(spotCount) && spotCount >= 1 && spotCount <= 15) {
         targetPreview.innerHTML = '<span></span>'.repeat(spotCount);
         targetPreview.setAttribute('aria-label', `${spotCount} 个水平等间距焦点`);
     }
