@@ -1827,3 +1827,239 @@ body {
     color: var(--text-primary);
     cursor: pointer;
 }
+
+/* ==================== 模块原理弹窗（Theory Modal） ==================== */
+.theory-btn {
+    color: var(--primary-color);
+    font-weight: 700;
+}
+
+.theory-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 25, 41, 0.55);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 3000;
+    padding: 24px;
+}
+
+.theory-overlay.open {
+    display: flex;
+}
+
+.theory-modal {
+    background: #ffffff;
+    color: var(--text-primary);
+    border-radius: 14px;
+    max-width: 880px;
+    width: 100%;
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 18px 60px rgba(0, 30, 60, 0.35);
+    overflow: hidden;
+}
+
+.theory-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+    color: #ffffff;
+    flex: 0 0 auto;
+}
+
+.theory-header h3 {
+    font-size: 17px;
+    font-weight: 600;
+    margin: 0;
+}
+
+.theory-close {
+    background: rgba(255, 255, 255, 0.18);
+    border: none;
+    color: #ffffff;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.theory-close:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+.theory-body {
+    padding: 18px 22px 22px;
+    overflow-y: auto;
+}
+
+.theory-summary {
+    font-size: 14px;
+    line-height: 1.75;
+    color: #333333;
+    margin: 0 0 14px;
+}
+
+.theory-figure {
+    background: #f7fafd;
+    border: 1px solid #dbe6f0;
+    border-radius: 10px;
+    padding: 10px;
+}
+
+.theory-figure svg {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.theory-points {
+    margin: 14px 0 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 8px 16px;
+}
+
+.theory-points li {
+    position: relative;
+    padding-left: 18px;
+    font-size: 13px;
+    line-height: 1.6;
+    color: #444444;
+}
+
+.theory-points li::before {
+    content: '';
+    position: absolute;
+    left: 2px;
+    top: 8px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--primary-color);
+}
+
+/* ---------- 示意图 SVG 类 ---------- */
+.th-label { fill: #334155; font: 400 14px/18px "Segoe UI", "Microsoft YaHei", sans-serif; }
+.th-step { fill: #0f4c81; font: 600 13px/18px "Segoe UI", "Microsoft YaHei", sans-serif; }
+.th-panel { fill: #eaf2fb; stroke: #94b8dc; stroke-width: 1.5; }
+.th-stripe { stroke: #7fa8cf; stroke-width: 3; stroke-linecap: round; }
+.th-ring { fill: none; stroke: #7fa8cf; stroke-width: 2; }
+.th-struct { fill: none; stroke: #8aa4bd; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.th-ray { stroke: var(--primary-color); stroke-width: 1.8; fill: none; stroke-linecap: round; }
+.th-cycle { stroke: #2e9e6b; stroke-width: 1.8; fill: none; stroke-linecap: round; }
+.th-cycle2 { stroke: #2e6b9e; stroke-width: 1.8; fill: none; stroke-linecap: round; }
+.th-leak { stroke: #b6c4d1; stroke-width: 1.5; fill: none; stroke-linecap: round; stroke-dasharray: 5 5; }
+.th-spiral { fill: none; stroke: #2e9e6b; stroke-width: 2; stroke-linecap: round; }
+.th-cross { stroke: #e2543f; stroke-width: 3; stroke-linecap: round; }
+.th-dark { fill: var(--surface); stroke: #e2543f; stroke-width: 1.5; }
+.th-spot { fill: #ff7b3d; stroke: #d95a1e; stroke-width: 1; }
+.th-spotline { stroke: #ff7b3d; stroke-width: 5; stroke-linecap: round; }
+.th-pixel { fill: #6aa84f; }
+.th-speckle circle { stroke: #d95a1e; stroke-width: 0.8; }
+.th-flow {
+    stroke-dasharray: 7 9;
+}
+.th-spin-group {
+    transform-box: fill-box;
+    transform-origin: center;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .th-flow { animation: thFlow 1.15s linear infinite; }
+    .th-pulse { animation: thPulse 1.7s ease-in-out infinite; }
+    .th-spin { animation: thSpin 7s linear infinite; }
+}
+
+@keyframes thFlow {
+    to { stroke-dashoffset: -32; }
+}
+
+@keyframes thPulse {
+    0%, 100% { opacity: 0.45; }
+    50% { opacity: 1; }
+}
+
+@keyframes thSpin {
+    to { transform: rotate(360deg); }
+}
+
+/* ==================== 批量参数扫描面板 ==================== */
+/* 跨双列：信息密度最高的面板独占一行，避免右下大块空白 */
+#batch_scan_panel {
+    grid-column: 1 / -1;
+}
+
+.batch-scan-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+}
+
+/* 参数行：5 字段等宽栅格，跨全宽后一行排开 */
+.batch-scan-row.batch-grid5 {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 8px 14px;
+}
+
+/* 模板行/表头：编号 + 3 列严格对齐 */
+.batch-scan-row.batch-tpl-row {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
+}
+
+.batch-scan-row > label {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    min-width: 0;
+}
+
+.batch-scan-row > label .param-input,
+.batch-scan-row > input.param-input {
+    width: 100%;
+}
+
+.batch-scan-row > span:first-child {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    width: 34px;
+    text-align: center;
+}
+
+.batch-scan-spots {
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 10px;
+    background: #f7f9fb;
+}
+
+.batch-scan-spots-head {
+    font-size: 11px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    margin-bottom: 8px;
+}
+
+@media (max-width: 760px) {
+    .batch-scan-row.batch-grid5 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}

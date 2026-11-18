@@ -4,8 +4,8 @@ const vm = require('node:vm');
 
 const context = { window: {}, Float32Array, Uint8Array, Int32Array, Number, Math, Array, Error };
 vm.createContext(context);
-vm.runInContext(fs.readFileSync('static/js/slam_spot_vision.js', 'utf8'), context);
-const { estimateBrightSpot } = context.window.SLAMSpotVision;
+vm.runInContext(fs.readFileSync('static/js/spot_vision.js', 'utf8'), context);
+const { estimateBrightSpot } = context.window.SpotVision;
 
 function image(width, height, value = 28) {
     const data = new Uint8ClampedArray(width * height * 4);
@@ -62,4 +62,4 @@ for (let y = 24; y <= 56; y++) {
 assert.throws(() => estimateBrightSpot(broad, 40, 40, 16), /超出局部搜索范围/);
 assert.throws(() => estimateBrightSpot(noisy, 2, 2, 16), /图像边缘/);
 
-process.stdout.write('SLAM spot vision: 5 checks passed\n');
+process.stdout.write('Spot vision: 5 checks passed\n');

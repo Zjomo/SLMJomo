@@ -16,8 +16,8 @@ import numpy as np
 from PIL import Image
 
 from app import (
-    SLAM_MOTION_JOBS,
-    SLAM_MOTION_JOBS_LOCK,
+    SPOT_MOTION_JOBS,
+    SPOT_MOTION_JOBS_LOCK,
     SLMPatternGenerator,
     app,
 )
@@ -131,7 +131,7 @@ class MotionJobApiTests(unittest.TestCase):
             {'x_um': -10, 'y_um': 0}, {'x_um': 1000, 'y_um': 0}
         ]
         payload['parameters']['frame_interval_ms'] = 1
-        response = self.client.post('/api/slam/motion/jobs', json=payload)
+        response = self.client.post('/api/spot_motion/jobs', json=payload)
         self.assertEqual(response.status_code, 400)
         self.assertFalse(response.get_json()['success'])
 
@@ -149,7 +149,7 @@ class MotionJobApiTests(unittest.TestCase):
             'output_height': 2048,
             'frame_interval_ms': 150,
         })
-        response = self.client.post('/api/slam/motion/jobs', json=payload)
+        response = self.client.post('/api/spot_motion/jobs', json=payload)
         self.assertEqual(response.status_code, 400)
         self.assertIn('预计处理像素量', response.get_json()['error'])
 
@@ -164,24 +164,24 @@ class MotionJobApiTests(unittest.TestCase):
             reconstruction = 'data:image/png;base64,' + base64.b64encode(buffer.getvalue()).decode('ascii')
             simulator.return_value = {'intensity_color': reconstruction}
 
-            response = self.client.post('/api/slam/motion/jobs', json=payload)
+            response = self.client.post('/api/spot_motion/jobs', json=payload)
             self.assertEqual(response.status_code, 202, response.get_json())
             job_id = response.get_json()['job_id']
-            first = self.client.post(f'/api/slam/motion/jobs/{job_id}/next')
+            first = self.client.post(f'/api/spot_motion/jobs/{job_id}/next')
             self.assertEqual(first.status_code, 200)
             self.assertEqual(first.get_json()['index'], 0)
             self.assertEqual(first.get_json()['completed_frames'], 1)
             self.assertFalse(first.get_json()['complete'])
-            second = self.client.post(f'/api/slam/motion/jobs/{job_id}/next')
+            second = self.client.post(f'/api/spot_motion/jobs/{job_id}/next')
             self.assertEqual(second.status_code, 200)
             self.assertTrue(second.get_json()['complete'])
             self.assertEqual(second.get_json()['completed_frames'], 2)
             self.assertEqual(second.get_json()['index'], 1)
 
             # A new worker/process can recover completed tasks from disk.
-            with SLAM_MOTION_JOBS_LOCK:
-                SLAM_MOTION_JOBS.pop(job_id, None)
-            status = self.client.get(f'/api/slam/motion/jobs/{job_id}').get_json()
+            with SPOT_MOTION_JOBS_LOCK:
+                SPOT_MOTION_JOBS.pop(job_id, None)
+            status = self.client.get(f'/api/spot_motion/jobs/{job_id}').get_json()
             self.assertEqual(status['status'], 'complete')
             phase = self.client.get(status['frames'][0]['phase_url'])
             self.assertEqual(phase.status_code, 200)
@@ -220,7 +220,7 @@ class MotionJobApiTests(unittest.TestCase):
         self.assertAlmostEqual(first_call['spot_radius_mm'], 0.003)
 
     def test_job_frame_route_rejects_unknown_job_and_index(self):
-        response = self.client.get('/api/slam/motion/jobs/missing/frames/0/phase')
+        response = self.client.get('/api/spot_motion/jobs/missing/frames/0/phase')
         self.assertEqual(response.status_code, 404)
 
 
@@ -293,15 +293,15 @@ class MotionUploadApiTests(unittest.TestCase):
             'parameters': {'width': self.WIDTH, 'height': self.HEIGHT},
             'generated_frames': generated_frames,
         }
-        with SLAM_MOTION_JOBS_LOCK:
-            SLAM_MOTION_JOBS[self.job_id] = self.job
+        with SPOT_MOTION_JOBS_LOCK:
+            SPOT_MOTION_JOBS[self.job_id] = self.job
 
         app.config['TESTING'] = True
         self.client = app.test_client()
 
     def tearDown(self):
-        with SLAM_MOTION_JOBS_LOCK:
-            SLAM_MOTION_JOBS.pop(self.job_id, None)
+        with SPOT_MOTION_JOBS_LOCK:
+            SPOT_MOTION_JOBS.pop(self.job_id, None)
         gc.collect()
         self.temp_dir.cleanup()
 

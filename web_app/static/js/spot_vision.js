@@ -138,5 +138,5 @@
         };
     }
 
-    window.SLAMSpotVision = { estimateBrightSpot };
+    window.SpotVision = { estimateBrightSpot };
 })();

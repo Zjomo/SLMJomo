@@ -38,24 +38,24 @@ function element(id, value = '') {
 }
 
 [
-    ['slam_pixels_per_um', '2'], ['slam_um_per_px', '0.5'],
-    ['slam_focal_um', '1000'], ['slam_wavelength_nm', '532'],
-    ['slam_magnification', '50'], ['slam_algorithm', 'gaussian_wgs'],
-    ['slam_phase_direction', 'standard'], ['slam_beam_diameter_mm', '6'],
-    ['slam_spot_diameter_um', '6'], ['slam_width', '1272'], ['slam_height', '1024'],
-    ['slam_speed_um_s', '2'], ['slam_frame_interval_ms', '100'],
-    ['slam_iterations', '30'], ['slam_focus_scale_x', '1.5'],
-    ['slam_focus_scale_y', '0.8'], ['slam_focus_field_um', '20'], ['slam_status', '']
-    ,['slam_reference_distance_um', '50'], ['slam_pixels_per_um', '2'],
-    ['slam_detection_radius_px', '16'], ['slam_feedback_gain', '0.75']
+    ['motion_pixels_per_um', '2'], ['motion_um_per_px', '0.5'],
+    ['motion_focal_um', '1000'], ['motion_wavelength_nm', '532'],
+    ['motion_magnification', '50'], ['motion_algorithm', 'gaussian_wgs'],
+    ['motion_phase_direction', 'standard'], ['motion_beam_diameter_mm', '6'],
+    ['motion_spot_diameter_um', '6'], ['motion_width', '1272'], ['motion_height', '1024'],
+    ['motion_speed_um_s', '2'], ['motion_frame_interval_ms', '100'],
+    ['motion_iterations', '30'], ['motion_focus_scale_x', '1.5'],
+    ['motion_focus_scale_y', '0.8'], ['motion_focus_field_um', '20'], ['motion_status', '']
+    ,['motion_reference_distance_um', '50'], ['motion_pixels_per_um', '2'],
+    ['motion_detection_radius_px', '16'], ['motion_feedback_gain', '0.75']
 ].forEach(([id, value]) => element(id, value));
 [
-    'slam_microscope_canvas', 'slam_focus_canvas', 'slam_marker_list', 'slam_assign_select',
-    'slam_origin_button', 'slam_roi_button', 'slam_scale_button', 'slam_scale_status',
-    'slam_camera_stop_btn', 'slam_camera_start_btn', 'slam_screen_start_btn',
-    'slam_spot_tabs', 'slam_progress', 'slam_phase_preview', 'slam_recon_preview',
-    'slam_feedback_mode_btn', 'slam_apply_feedback_btn', 'slam_clear_feedback_btn',
-    'slam_feedback_report'
+    'motion_microscope_canvas', 'motion_focus_canvas', 'motion_marker_list', 'motion_assign_select',
+    'motion_origin_button', 'motion_roi_button', 'motion_scale_button', 'motion_scale_status',
+    'motion_camera_stop_btn', 'motion_camera_start_btn', 'motion_screen_start_btn',
+    'motion_spot_tabs', 'motion_progress', 'motion_phase_preview', 'motion_recon_preview',
+    'motion_feedback_mode_btn', 'motion_apply_feedback_btn', 'motion_clear_feedback_btn',
+    'motion_feedback_report'
 ].forEach(id => element(id));
 
 const document = {
@@ -71,14 +71,14 @@ const requests = [];
 let nextFrame = 0;
 async function fetchMock(url, options = {}) {
     requests.push({ url, method: options.method || 'GET' });
-    if (url === '/api/slam/motion/jobs' && options.method === 'POST') {
+    if (url === '/api/spot_motion/jobs' && options.method === 'POST') {
         return { ok: true, status: 202, json: async () => ({ success: true, job_id: 'job-generated', frame_count: 2 }) };
     }
     if (url.endsWith('/next') && options.method === 'POST') {
         nextFrame++;
         return { ok: true, status: 200, json: async () => ({ success: true, completed_frames: nextFrame }) };
     }
-    if (url === '/api/slam/motion/jobs/job-generated') {
+    if (url === '/api/spot_motion/jobs/job-generated') {
         return { ok: true, status: 200, json: async () => ({
             success: true, status: 'complete', frame_count: 2,
             frames: [0, 1].map(index => ({
@@ -97,7 +97,7 @@ async function fetchMock(url, options = {}) {
 }
 const window = {
     showModule(id) { navigatedTo = id; },
-    async appendSLAMJobToCGH(jobId) { appendedJobId = jobId; return true; },
+    async appendMotionJobToCGH(jobId) { appendedJobId = jobId; return true; },
     showNotification() {},
     confirm() { return true; },
     setTimeout
@@ -110,10 +110,10 @@ context.Image = class MockImage {
     get src() { return this._src; }
 };
 vm.createContext(context);
-vm.runInContext(fs.readFileSync('static/js/slam_spot_vision.js', 'utf8'), context);
-vm.runInContext(fs.readFileSync('static/js/slam_motion.js', 'utf8'), context);
+vm.runInContext(fs.readFileSync('static/js/spot_vision.js', 'utf8'), context);
+vm.runInContext(fs.readFileSync('static/js/spot_motion.js', 'utf8'), context);
 
-const motion = window.SLAMMotion;
+const motion = window.SpotMotion;
 motion.initialize();
 motion.state.image = { naturalWidth: 1200, naturalHeight: 800 };
 motion.state.imageDataUrl = 'data:image/png;base64,microscope';
@@ -142,14 +142,14 @@ assert.equal(JSON.stringify(payload.paths[0].waypoints[1]), JSON.stringify({ x_u
 
 assert.equal(JSON.stringify(motion.sampleToFocusUm(110, 190)), JSON.stringify({ x_um: 7.5, y_um: 4 }));
 
-elements.get('slam_scale_button').listeners.click[0]();
-const microscope = elements.get('slam_microscope_canvas');
+elements.get('motion_scale_button').listeners.click[0]();
+const microscope = elements.get('motion_microscope_canvas');
 microscope.listeners.click[0]({ clientX: 100, clientY: 100 });
 microscope.listeners.click[0]({ clientX: 300, clientY: 100 });
-assert.equal(Number(elements.get('slam_pixels_per_um').value), 5,
+assert.equal(Number(elements.get('motion_pixels_per_um').value), 5,
     'two-point calibration converts known micrometre distance to px/um');
-assert.equal(Number(elements.get('slam_um_per_px').value), 0.2);
-assert.match(elements.get('slam_scale_status').textContent, /0\.200000 μm\/px/);
+assert.equal(Number(elements.get('motion_um_per_px').value), 0.2);
+assert.match(elements.get('motion_scale_status').textContent, /0\.200000 μm\/px/);
 
 const saved = motion.getProjectState();
 saved.paths[0][0].x_um = 999;
@@ -163,8 +163,8 @@ motion.state.phaseUrls = ['/phase/0'];
     assert.equal(motion.state.jobId, 'job-generated');
     assert.equal(motion.state.phaseUrls.length, 2);
     assert.equal(requests.length, 4, 'job creation, two sequential frames, and final status');
-    assert.equal(requests[1].url, '/api/slam/motion/jobs/job-generated/next');
-    assert.equal(requests[2].url, '/api/slam/motion/jobs/job-generated/next');
+    assert.equal(requests[1].url, '/api/spot_motion/jobs/job-generated/next');
+    assert.equal(requests[2].url, '/api/spot_motion/jobs/job-generated/next');
     assert.equal(motion.state.jobFrames.length, 2);
 
     assert.equal(motion.beginSpotFeedback(), true);
@@ -181,12 +181,12 @@ motion.state.phaseUrls = ['/phase/0'];
     assert.ok(Math.abs(correctedPayload.paths[0].waypoints[0].y_um - 1.4) < 1e-9);
     const correctedProject = motion.getProjectState();
     assert.ok(Math.abs(correctedProject.feedback_offsets_um[0].x_um + 1.125) < 1e-9);
-    elements.get('slam_focus_scale_x').value = '2';
+    elements.get('motion_focus_scale_x').value = '2';
     assert.equal(motion.beginSpotFeedback(), false,
         'feedback measurements must use the calibration snapshot that generated the selected job');
-    elements.get('slam_focus_scale_x').value = '1.5';
+    elements.get('motion_focus_scale_x').value = '1.5';
 
-    assert.equal(await motion.addSLAMFramesToCGH(), true);
+    assert.equal(await motion.addMotionFramesToCGH(), true);
     assert.equal(appendedJobId, 'job-generated');
     assert.equal(navigatedTo, 'cgh-simulation');
 
@@ -203,7 +203,7 @@ motion.state.phaseUrls = ['/phase/0'];
     motion.state.paths[2] = [];
     assert.throws(() => motion.buildPayload(), /三个光斑都需要至少一个有效路径点/);
 
-    elements.get('slam_roi_button').listeners.click[0]();
+    elements.get('motion_roi_button').listeners.click[0]();
     microscope.listeners.pointerdown[0]({ clientX: 100, clientY: 100, pointerId: 1 });
     microscope.listeners.pointermove[0]({ clientX: 300, clientY: 300, pointerId: 1 });
     microscope.listeners.pointerup[0]({ clientX: 300, clientY: 300, pointerId: 1 });
@@ -214,28 +214,28 @@ motion.state.phaseUrls = ['/phase/0'];
 
     const template = fs.readFileSync('templates/index_pro.html', 'utf8');
     const requiredIds = [
-        'slam_image_input', 'slam_microscope_canvas', 'slam_origin_button', 'slam_marker_list',
-        'slam_camera_start_btn', 'slam_screen_start_btn', 'slam_camera_stop_btn', 'slam_roi_button',
-        'slam_reference_distance_um', 'slam_scale_button', 'slam_scale_status',
-        'slam_assign_select', 'slam_spot_tabs', 'slam_focus_canvas', 'slam_pixels_per_um',
-        'slam_um_per_px', 'slam_focal_um', 'slam_wavelength_nm', 'slam_magnification',
-        'slam_algorithm', 'slam_phase_direction', 'slam_beam_diameter_mm',
-        'slam_spot_diameter_um', 'slam_width', 'slam_height', 'slam_speed_um_s',
-        'slam_frame_interval_ms', 'slam_iterations', 'slam_focus_scale_x', 'slam_focus_scale_y',
-        'slam_focus_field_um', 'slam_generate_btn', 'slam_add_cgh_btn', 'slam_export_btn',
-        'slam_usb_start_slot', 'slam_usb_overwrite', 'slam_upload_btn', 'slam_status',
-        'slam_progress', 'slam_frame_counter', 'slam_phase_preview', 'slam_recon_preview',
-        'slam_preview_prev', 'slam_preview_next', 'slam_detection_radius_px',
-        'slam_feedback_gain', 'slam_feedback_mode_btn', 'slam_apply_feedback_btn',
-        'slam_clear_feedback_btn', 'slam_feedback_report'
+        'motion_image_input', 'motion_microscope_canvas', 'motion_origin_button', 'motion_marker_list',
+        'motion_camera_start_btn', 'motion_screen_start_btn', 'motion_camera_stop_btn', 'motion_roi_button',
+        'motion_reference_distance_um', 'motion_scale_button', 'motion_scale_status',
+        'motion_assign_select', 'motion_spot_tabs', 'motion_focus_canvas', 'motion_pixels_per_um',
+        'motion_um_per_px', 'motion_focal_um', 'motion_wavelength_nm', 'motion_magnification',
+        'motion_algorithm', 'motion_phase_direction', 'motion_beam_diameter_mm',
+        'motion_spot_diameter_um', 'motion_width', 'motion_height', 'motion_speed_um_s',
+        'motion_frame_interval_ms', 'motion_iterations', 'motion_focus_scale_x', 'motion_focus_scale_y',
+        'motion_focus_field_um', 'motion_generate_btn', 'motion_add_cgh_btn', 'motion_export_btn',
+        'motion_usb_start_slot', 'motion_usb_overwrite', 'motion_upload_btn', 'motion_status',
+        'motion_progress', 'motion_frame_counter', 'motion_phase_preview', 'motion_recon_preview',
+        'motion_preview_prev', 'motion_preview_next', 'motion_detection_radius_px',
+        'motion_feedback_gain', 'motion_feedback_mode_btn', 'motion_apply_feedback_btn',
+        'motion_clear_feedback_btn', 'motion_feedback_report'
     ];
     requiredIds.forEach(id => assert.equal((template.match(new RegExp(`id="${id}"`, 'g')) || []).length, 1,
         `template contains exactly one ${id}`));
-    assert.match(template, /id="slam-motion"[\s\S]*id="cgh-simulation"/);
-    assert.match(template, /css\/slam_motion\.css/);
-    assert.match(template, /js\/slam_motion\.js/);
-    assert.match(template, /js\/slam_spot_vision\.js/);
-    process.stdout.write('SLAM motion UI contract: 6 checks passed\n');
+    assert.match(template, /id="spot-motion"[\s\S]*id="cgh-simulation"/);
+    assert.match(template, /css\/spot_motion\.css/);
+    assert.match(template, /js\/spot_motion\.js/);
+    assert.match(template, /js\/spot_vision\.js/);
+    process.stdout.write('Spot motion UI contract: 6 checks passed\n');
 })().catch(error => {
     process.stderr.write(`${error.stack || error}\n`);
     process.exitCode = 1;

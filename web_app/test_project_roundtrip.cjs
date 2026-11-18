@@ -39,8 +39,8 @@ function makeElement(id) {
 const elements = new Map();
 let savedBlob = null;
 let displayedPhase = null;
-let restoredSLAMState = null;
-const slamState = {
+let restoredMotionState = null;
+const motionState = {
     version: 1,
     image_data_url: pngDataUri(2, 2),
     markers: [{ id: 'm1', name: 'sample', x_px: 1, y_px: 1 }],
@@ -48,7 +48,7 @@ const slamState = {
     origin: { x_px: 0, y_px: 0 },
     assignments: ['m1', null, null],
     paths: [[{ x_um: 1, y_um: 2 }], [], []],
-    parameters: { slam_pixels_per_um: '2', slam_algorithm: 'analytic' }
+    parameters: { motion_pixels_per_um: '2', motion_algorithm: 'analytic' }
 };
 const document = {
     getElementById(id) {
@@ -88,9 +88,9 @@ const noop = () => {};
 const context = vm.createContext({
     AppState: appState,
     window: {
-        SLAMMotion: {
-            getProjectState: () => JSON.parse(JSON.stringify(slamState)),
-            async restoreProjectState(state) { restoredSLAMState = state; }
+        SpotMotion: {
+            getProjectState: () => JSON.parse(JSON.stringify(motionState)),
+            async restoreProjectState(state) { restoredMotionState = state; }
         }
     },
     document,
@@ -168,16 +168,16 @@ assert.ok(savedBlob, 'save creates a downloadable project blob');
     assert.equal(project.cgh.phase_image_ref, 'current_output');
     assert.equal(project.cgh.regenerated_image, regenerated);
     assert.equal(project.cgh.light_shape_image, lightShape);
-    assert.deepEqual(project.slam_motion.paths, slamState.paths);
-    assert.equal(project.slam_motion.image_data_url, slamState.image_data_url);
+    assert.deepEqual(project.spot_motion.paths, motionState.paths);
+    assert.equal(project.spot_motion.image_data_url, motionState.image_data_url);
 
-    appState.cghVideo.frames = [{ id: 99, source: 'slam', phase: 'server-url', target: null }];
+    appState.cghVideo.frames = [{ id: 99, source: 'motion', phase: 'server-url', target: null }];
     context.saveWorkflowProject();
     const motionProject = JSON.parse(await savedBlob.text());
     assert.equal(motionProject.cgh_video.frames.length, 0,
-        'SLAM frames are regenerated from path state instead of embedding full-resolution images');
+        'Motion frames are regenerated from path state instead of embedding full-resolution images');
     await context.restoreWorkflowProject(motionProject);
-    assert.deepEqual(restoredSLAMState.paths, slamState.paths);
+    assert.deepEqual(restoredMotionState.paths, motionState.paths);
     appState.cghVideo.frames = [];
 
     document.getElementById('focus_mm').value = '1000';
@@ -194,12 +194,12 @@ assert.ok(savedBlob, 'save creates a downloadable project blob');
     assert.equal(appState.cghData.lightShapeImage, lightShape);
     assert.equal(document.getElementById('cgh_target_path').value, 'target.png');
 
-    slamState.image_data_url = null;
-    slamState.markers = [];
-    slamState.selected_marker_id = null;
-    slamState.origin = null;
-    slamState.assignments = [null, null, null];
-    slamState.paths = [[], [], []];
+    motionState.image_data_url = null;
+    motionState.markers = [];
+    motionState.selected_marker_id = null;
+    motionState.origin = null;
+    motionState.assignments = [null, null, null];
+    motionState.paths = [[], [], []];
 
     const maximumImage = pngDataUri(4096, 4096);
     appState.currentImageData = { image: maximumImage, filename: 'large-cgh.bmp' };

@@ -8,6 +8,7 @@ from flask_sqlalchemy import SQLAlchemy
 import numpy as np
 from PIL import Image
 import io
+import ast
 import base64
 import math
 import os
@@ -21,7 +22,7 @@ import json
 from functools import lru_cache
 from scipy import ndimage
 from sqlalchemy import inspect
-from slam_motion import (
+from spot_motion import (
     calibrate_pixel_to_sample_um,
     plan_motion_frames,
     sample_to_focus_um,
@@ -2047,12 +2048,14 @@ def generate_pattern(pattern_type):
                 iterations=iterations,
                 spot_radius_mm=spot_radius_mm,
                 phase_direction=phase_direction,
+                with_lens=bool(data.get('with_lens', True)),
                 target_spots=target_spots
             )
             name = (
                 f"fresnel_spots_f{focal_length:g}mm_"
                 f"w{wavelength:g}nm_n{spot_count}_d{spot_spacing:g}mm_"
                 f"{algorithm}_{phase_direction}"
+                f"{'' if data.get('with_lens', True) else '_nolens'}"
                 f"{'_custom' if target_spots is not None else ''}"
             )
 
@@ -2277,6 +2280,275 @@ def generate_pattern(pattern_type):
             'success': False,
             'error': str(e)
         }), 400
+
+
+# ==================== 批量相位图生成（参数扫描，输出 ZIP） ====================
+_BATCH_ALLOWED_BINOPS = (ast.Add, ast.Sub, ast.Mult, ast.Div,
+                         ast.FloorDiv, ast.Mod, ast.Pow)
+_BATCH_MAX_FRAMES = 1000
+
+
+def _batch_safe_expr(expr, variables):
+    """安全求值：仅允许数字、变量名、四则/取余/幂（指数受限）与一元正负号。"""
+    text = str(expr).strip()
+    if not text:
+        raise ValueError('表达式为空')
+    try:
+        tree = ast.parse(text, mode='eval')
+    except SyntaxError as exc:
+        raise ValueError(f'表达式语法错误: {expr}') from exc
+
+    def _walk(node):
+        if isinstance(node, ast.Expression):
+            return _walk(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return float(node.value)
+        if isinstance(node, ast.Name):
+            if node.id in variables:
+                return float(variables[node.id])
+            raise ValueError(f'未知变量 "{node.id}"（可用变量: {", ".join(sorted(variables))}）')
+        if isinstance(node, ast.BinOp) and isinstance(node.op, _BATCH_ALLOWED_BINOPS):
+            left = _walk(node.left)
+            right = _walk(node.right)
+            if isinstance(node.op, ast.Add):
+                return left + right
+            if isinstance(node.op, ast.Sub):
+                return left - right
+            if isinstance(node.op, ast.Mult):
+                return left * right
+            if isinstance(node.op, ast.Div):
+                if right == 0:
+                    raise ValueError(f'表达式除零: {expr}')
+                return left / right
+            if isinstance(node.op, ast.FloorDiv):
+                if right == 0:
+                    raise ValueError(f'表达式除零: {expr}')
+                return left // right
+            if isinstance(node.op, ast.Mod):
+                if right == 0:
+                    raise ValueError(f'表达式除零: {expr}')
+                return left % right
+            if isinstance(node.op, ast.Pow):
+                if abs(right) > 16:
+                    raise ValueError(f'表达式指数过大: {expr}')
+                return left ** right
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+            value = _walk(node.operand)
+            return -value if isinstance(node.op, ast.USub) else value
+        raise ValueError(f'表达式包含不支持元素: {expr}')
+
+    value = _walk(tree)
+    if not math.isfinite(value):
+        raise ValueError(f'表达式结果非有限数: {expr}')
+    return value
+
+
+def _batch_variable_values(variable):
+    """由 {name, start, stop, step}（或 count）生成变量取值序列（含浮点容差）。"""
+    name = str(variable.get('name', 'd')).strip()
+    if not name or not name.isidentifier():
+        raise ValueError(f'变量名非法: {name!r}（须为合法标识符）')
+    start = float(variable.get('start', 0))
+    stop = float(variable.get('stop', 0))
+    if not (math.isfinite(start) and math.isfinite(stop)):
+        raise ValueError('起点/终点必须是有限数值')
+    tol = max(abs(start), abs(stop), 1.0) * 1e-9
+    if 'count' in variable and variable.get('count') is not None:
+        count = int(variable['count'])
+        if not 1 <= count <= _BATCH_MAX_FRAMES:
+            raise ValueError(f'帧数必须在 1~{_BATCH_MAX_FRAMES} 之间')
+        values = [start + (stop - start) * i / (count - 1) if count > 1 else start
+                  for i in range(count)]
+    else:
+        # 步长取绝对值作为步幅，方向由 起点→终点 决定
+        # （符合"从 3.0mm 以每次 0.1mm 向内移动到 0.0mm"的表达习惯）
+        step_mag = abs(float(variable.get('step', 0.1)))
+        if step_mag == 0 or not math.isfinite(step_mag):
+            raise ValueError('步长必须为非零有限数')
+        values = []
+        value = start
+        if stop >= start:
+            while value <= stop + tol and len(values) < _BATCH_MAX_FRAMES:
+                values.append(value)
+                value += step_mag
+        else:
+            while value >= stop - tol and len(values) < _BATCH_MAX_FRAMES:
+                values.append(value)
+                value -= step_mag
+        if not values:
+            values.append(start)
+    if len(values) >= _BATCH_MAX_FRAMES:
+        raise ValueError(f'帧数超过上限 {_BATCH_MAX_FRAMES}，请增大步长')
+    return name, values
+
+
+def _batch_merge_if_coincident(spots, tol_mm=1e-9):
+    """所有点完全重合时合并为质心单点（物理等效：多点重叠 = 单点加强）。"""
+    xs = [s['x_mm'] for s in spots]
+    ys = [s['y_mm'] for s in spots]
+    max_dist = max(
+        (math.hypot(xs[i] - xs[j], ys[i] - ys[j])
+         for i in range(len(spots)) for j in range(i + 1, len(spots))),
+        default=0.0
+    )
+    if spots and max_dist <= tol_mm:
+        return [{
+            'x_mm': sum(xs) / len(xs),
+            'y_mm': sum(ys) / len(ys),
+            'weight': min(10.0, sum(s['weight'] for s in spots)),
+        }], True
+    return spots, False
+
+
+@app.route('/api/generate/batch_spots', methods=['POST'])
+def generate_batch_spots():
+    """
+    基于菲涅尔多点聚焦的批量相位图生成（参数扫描 → ZIP 下载）。
+
+    请求体:
+        base_params: 与 fresnel_three_spots 相同的固定参数
+                     (focal_length/wavelength/pixel_size_um/algorithm/
+                      incident_beam_diameter_mm/iterations/phase_direction/
+                      width/height/with_lens)
+        spots_template: [{x_mm, y_mm, weight}, ...]
+                        值可为数字或含变量的表达式字符串，如 "-d"、"d*0.5"
+        variable: {name, start, stop, step} 或 {name, start, stop, count}
+        frame_duration_ms: sequence.csv 每帧时长（默认 100）
+        skip_errors: 单帧失败时跳过（默认 true）；false 则整批失败
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        base = data.get('base_params') or {}
+
+        width = int(base.get('width', 1272))
+        height = int(base.get('height', 1024))
+        if not (64 <= width <= 4096 and 64 <= height <= 4096):
+            raise ValueError('图像宽高必须在 64 到 4096 之间')
+        common = dict(
+            width=width,
+            height=height,
+            focal_length=float(base.get('focal_length', 1000)),
+            wavelength=float(base.get('wavelength', 532)),
+            pixel_size_um=float(base.get('pixel_size_um', 12.5)),
+            algorithm=str(base.get('algorithm', 'gaussian_wgs')),
+            incident_beam_diameter_mm=float(
+                base.get('incident_beam_diameter_mm', 10.0)),
+            iterations=int(base.get('iterations', 30)),
+            phase_direction=str(base.get('phase_direction', 'standard')),
+            with_lens=bool(base.get('with_lens', True)),
+            spot_radius_mm=(float(base['spot_radius_mm'])
+                            if base.get('spot_radius_mm') not in (None, '')
+                            else None),
+        )
+
+        template = data.get('spots_template')
+        if not isinstance(template, list) or not template:
+            raise ValueError('缺少光斑模板 spots_template')
+        if len(template) > 15:
+            raise ValueError('光斑模板最多 15 个点')
+
+        var_name, var_values = _batch_variable_values(
+            data.get('variable') or {})
+        frame_duration_ms = min(60000, max(1, int(
+            data.get('frame_duration_ms', 100))))
+        skip_errors = bool(data.get('skip_errors', True))
+
+        zip_buffer = io.BytesIO()
+        manifest = {
+            'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'variable': {'name': var_name, 'values': var_values},
+            'base_params': {**common, 'spot_radius_mm': common['spot_radius_mm']},
+            'frame_duration_ms': frame_duration_ms,
+            'requested_frames': len(var_values),
+            'frames': [],
+        }
+        frame_count = 0
+
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for index, value in enumerate(var_values):
+                variables = {var_name: value}
+                try:
+                    spots = []
+                    for i, tpl in enumerate(template):
+                        if not isinstance(tpl, dict):
+                            raise ValueError(f'模板第 {i + 1} 项格式无效')
+                        spots.append({
+                            'x_mm': _batch_safe_expr(tpl.get('x_mm', 0), variables),
+                            'y_mm': _batch_safe_expr(tpl.get('y_mm', 0), variables),
+                            'weight': _batch_safe_expr(tpl.get('weight', 1), variables),
+                        })
+                    spots, merged = _batch_merge_if_coincident(spots)
+                    spots = SLMPatternGenerator._normalize_target_spots(spots)
+                    phase_array = SLMPatternGenerator.fresnel_three_spots(
+                        target_spots=spots, **common)
+                    img = Image.fromarray(phase_array, mode='L')
+                    frame_name = (
+                        f"{index:04d}_{var_name}{value:.4g}mm"
+                        f"{'_merged' if merged else ''}.bmp"
+                    )
+                    img_bytes = io.BytesIO()
+                    img.save(img_bytes, format='BMP')
+                    zf.writestr(f'frames/{frame_name}', img_bytes.getvalue())
+                    zf.writestr(
+                        f'frames/{index:04d}_{var_name}{value:.4g}mm.csv',
+                        _spots_to_csv(spots))
+                    manifest['frames'].append({
+                        'index': index,
+                        'value': round(value, 12),
+                        'file': f'frames/{frame_name}',
+                        'target_spots': spots,
+                        'merged_single_spot': merged,
+                        'status': 'ok',
+                    })
+                    frame_count += 1
+                except ValueError as exc:
+                    manifest['frames'].append({
+                        'index': index,
+                        'value': round(value, 12),
+                        'status': 'skipped',
+                        'error': str(exc),
+                    })
+                    if not skip_errors:
+                        raise ValueError(
+                            f"第 {index} 帧（{var_name}={value:g}）失败: {exc}") from exc
+
+            manifest['frame_count'] = frame_count
+            manifest['skipped_count'] = len(var_values) - frame_count
+            if frame_count == 0:
+                raise ValueError('没有任何帧生成成功，请检查模板表达式与参数')
+            # 可直接导入 USB_SLMControl 的播放序列（槽位 = 帧序）
+            sequence_lines = ['Slot No.,Duration Time / msec']
+            for i in range(frame_count):
+                sequence_lines.append(f'{i},{frame_duration_ms}')
+            zf.writestr('sequence.csv', '\n'.join(sequence_lines) + '\n')
+            zf.writestr('manifest.json',
+                        json.dumps(manifest, ensure_ascii=False, indent=2))
+
+        zip_buffer.seek(0)
+        stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        return send_file(
+            zip_buffer,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=(
+                f"batch_{common['algorithm']}_{var_name}"
+                f"{var_values[0]:g}-{var_values[-1]:g}_{stamp}.zip"
+            )
+        )
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except Exception as e:  # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def _spots_to_csv(spots):
+    """光斑坐标表（每帧附带，便于复核）。"""
+    lines = ['index,x_mm,y_mm,weight']
+    for i, s in enumerate(spots):
+        lines.append(f"{i},{s['x_mm']:g},{s['y_mm']:g},{s['weight']:g}")
+    return '\n'.join(lines) + '\n'
 
 
 @app.route('/api/cgh/calculate', methods=['POST'])
@@ -2877,24 +3149,24 @@ def init_default_presets():
     db.session.commit()
 
 
-# ==================== SLAM 三光斑独立运动 ====================
-SLAM_MOTION_MAX_FRAMES = 200
-SLAM_MOTION_MAX_WAYPOINTS = 256
+# ==================== 三光斑独立运动 ====================
+SPOT_MOTION_MAX_FRAMES = 200
+SPOT_MOTION_MAX_WAYPOINTS = 256
 # Bound the amount of phase/reconstruction work accepted by one request.  The
 # frame-count limit alone still permits several gigabytes at the largest
 # supported resolution.
-SLAM_MOTION_MAX_ESTIMATED_PIXELS = 450_000_000
-SLAM_MOTION_MAX_COMPLETED_JOBS = 32
-SLAM_MOTION_JOBS = {}
-SLAM_MOTION_JOBS_LOCK = threading.RLock()
-SLAM_MOTION_USB_LOCK = threading.Lock()
+SPOT_MOTION_MAX_ESTIMATED_PIXELS = 450_000_000
+SPOT_MOTION_MAX_COMPLETED_JOBS = 32
+SPOT_MOTION_JOBS = {}
+SPOT_MOTION_JOBS_LOCK = threading.RLock()
+SPOT_MOTION_USB_LOCK = threading.Lock()
 
 
-def _get_slam_motion_job(job_id):
+def _get_spot_motion_job(job_id):
     """Return an in-memory job or restore a completed job from its manifest."""
     job_id = str(job_id)
-    with SLAM_MOTION_JOBS_LOCK:
-        job = SLAM_MOTION_JOBS.get(job_id)
+    with SPOT_MOTION_JOBS_LOCK:
+        job = SPOT_MOTION_JOBS.get(job_id)
     if job is not None or not re.fullmatch(r'[0-9a-f]{32}', job_id):
         return job
 
@@ -2935,8 +3207,8 @@ def _get_slam_motion_job(job_id):
                 'lock': threading.Lock(),
                 'error': None,
             }
-            with SLAM_MOTION_JOBS_LOCK:
-                return SLAM_MOTION_JOBS.setdefault(job_id, restored)
+            with SPOT_MOTION_JOBS_LOCK:
+                return SPOT_MOTION_JOBS.setdefault(job_id, restored)
     except (OSError, ValueError, TypeError):
         return None
     return None
@@ -3059,17 +3331,17 @@ def _validate_motion_request(payload):
         if not isinstance(path, dict):
             raise ValueError(f'第 {index + 1} 条路径格式无效')
         waypoints = path.get('waypoints')
-        if not isinstance(waypoints, list) or len(waypoints) > SLAM_MOTION_MAX_WAYPOINTS:
+        if not isinstance(waypoints, list) or len(waypoints) > SPOT_MOTION_MAX_WAYPOINTS:
             raise ValueError(
                 f'第 {index + 1} 条路径 waypoint 数量须在 1 到 '
-                f'{SLAM_MOTION_MAX_WAYPOINTS} 之间'
+                f'{SPOT_MOTION_MAX_WAYPOINTS} 之间'
             )
 
     frames = plan_motion_frames(
         paths,
         speed_um_s=parameters['speed_um_s'],
         frame_interval_ms=parameters['frame_interval_ms'],
-        max_frames=SLAM_MOTION_MAX_FRAMES
+        max_frames=SPOT_MOTION_MAX_FRAMES
     )
     minimum_spacing = parameters['spot_diameter_um']
     validate_minimum_spacing(frames, minimum_spacing)
@@ -3077,10 +3349,10 @@ def _validate_motion_request(payload):
         parameters['width'] * parameters['height'] +
         parameters['output_width'] * parameters['output_height']
     )
-    if estimated_pixels > SLAM_MOTION_MAX_ESTIMATED_PIXELS:
+    if estimated_pixels > SPOT_MOTION_MAX_ESTIMATED_PIXELS:
         raise ValueError(
             f'运动任务预计处理像素量 {estimated_pixels} 超过上限 '
-            f'{SLAM_MOTION_MAX_ESTIMATED_PIXELS}'
+            f'{SPOT_MOTION_MAX_ESTIMATED_PIXELS}'
         )
 
     focal_length_mm = parameters['focal_length_um'] / 1000
@@ -3123,9 +3395,9 @@ def _motion_job_status(job):
         index = frame['index']
         frame_urls.append({
             **frame,
-            'phase_url': f"/api/slam/motion/jobs/{job['id']}/frames/{index}/phase",
+            'phase_url': f"/api/spot_motion/jobs/{job['id']}/frames/{index}/phase",
             'reconstruction_url': (
-                f"/api/slam/motion/jobs/{job['id']}/frames/{index}/reconstruction"
+                f"/api/spot_motion/jobs/{job['id']}/frames/{index}/reconstruction"
             ),
         })
     return {
@@ -3139,21 +3411,21 @@ def _motion_job_status(job):
         'error': job.get('error'),
         'output_path': job.get('output_path'),
         'export_url': (
-            f"/api/slam/motion/jobs/{job['id']}/export.zip"
+            f"/api/spot_motion/jobs/{job['id']}/export.zip"
             if job['status'] == 'complete' else None
         ),
     }
 
 
-@app.route('/api/slam/motion/jobs', methods=['POST'])
-def create_slam_motion_job():
+@app.route('/api/spot_motion/jobs', methods=['POST'])
+def create_spot_motion_job():
     try:
         payload = request.get_json(silent=True) or {}
         calibration, parameters, paths, frames = _validate_motion_request(payload)
-        with SLAM_MOTION_JOBS_LOCK:
+        with SPOT_MOTION_JOBS_LOCK:
             active = sum(
                 job['status'] in ('planned', 'running')
-                for job in SLAM_MOTION_JOBS.values()
+                for job in SPOT_MOTION_JOBS.values()
             )
             if active >= 4:
                 return jsonify({
@@ -3162,9 +3434,9 @@ def create_slam_motion_job():
                 }), 409
             completed = sum(
                 job['status'] == 'complete'
-                for job in SLAM_MOTION_JOBS.values()
+                for job in SPOT_MOTION_JOBS.values()
             )
-            if completed >= SLAM_MOTION_MAX_COMPLETED_JOBS:
+            if completed >= SPOT_MOTION_MAX_COMPLETED_JOBS:
                 return jsonify({
                     'success': False,
                     'error': '已完成运动任务数量达到上限，请清理旧任务输出后再试'
@@ -3193,25 +3465,25 @@ def create_slam_motion_job():
                 'lock': threading.Lock(),
                 'error': None,
             }
-            SLAM_MOTION_JOBS[job_id] = job
+            SPOT_MOTION_JOBS[job_id] = job
         response = _motion_job_status(job)
         return jsonify(response), 202
     except (TypeError, ValueError, OSError) as exc:
         return jsonify({'success': False, 'error': str(exc)}), 400
 
 
-@app.route('/api/slam/motion/jobs/<job_id>', methods=['GET'])
-def get_slam_motion_job(job_id):
-    job = _get_slam_motion_job(job_id)
+@app.route('/api/spot_motion/jobs/<job_id>', methods=['GET'])
+def get_spot_motion_job(job_id):
+    job = _get_spot_motion_job(job_id)
     if job is None:
         return jsonify({'success': False, 'error': '运动任务不存在'}), 404
     return jsonify(_motion_job_status(job))
 
 
-@app.route('/api/slam/motion/jobs/<job_id>/next', methods=['POST'])
-def generate_next_slam_motion_frame(job_id):
-    with SLAM_MOTION_JOBS_LOCK:
-        job = SLAM_MOTION_JOBS.get(job_id)
+@app.route('/api/spot_motion/jobs/<job_id>/next', methods=['POST'])
+def generate_next_spot_motion_frame(job_id):
+    with SPOT_MOTION_JOBS_LOCK:
+        job = SPOT_MOTION_JOBS.get(job_id)
     if job is None:
         return jsonify({'success': False, 'error': '运动任务不存在'}), 404
 
@@ -3315,27 +3587,27 @@ def _motion_frame_path(job, index, kind):
     return os.path.join(job['directory'], job['generated_frames'][index][file_key])
 
 
-@app.route('/api/slam/motion/jobs/<job_id>/frames/<int:index>/phase', methods=['GET'])
-def get_slam_motion_phase_frame(job_id, index):
-    job = _get_slam_motion_job(job_id)
+@app.route('/api/spot_motion/jobs/<job_id>/frames/<int:index>/phase', methods=['GET'])
+def get_spot_motion_phase_frame(job_id, index):
+    job = _get_spot_motion_job(job_id)
     path = _motion_frame_path(job, index, 'phase') if job else None
     if path is None or not os.path.isfile(path):
         return jsonify({'success': False, 'error': '相位帧不存在'}), 404
     return send_file(path, mimetype='image/bmp', conditional=True)
 
 
-@app.route('/api/slam/motion/jobs/<job_id>/frames/<int:index>/reconstruction', methods=['GET'])
-def get_slam_motion_reconstruction_frame(job_id, index):
-    job = _get_slam_motion_job(job_id)
+@app.route('/api/spot_motion/jobs/<job_id>/frames/<int:index>/reconstruction', methods=['GET'])
+def get_spot_motion_reconstruction_frame(job_id, index):
+    job = _get_spot_motion_job(job_id)
     path = _motion_frame_path(job, index, 'reconstruction') if job else None
     if path is None or not os.path.isfile(path):
         return jsonify({'success': False, 'error': '重建帧不存在'}), 404
     return send_file(path, mimetype='image/png', conditional=True)
 
 
-@app.route('/api/slam/motion/jobs/<job_id>/export.zip', methods=['GET'])
-def export_slam_motion_job(job_id):
-    job = _get_slam_motion_job(job_id)
+@app.route('/api/spot_motion/jobs/<job_id>/export.zip', methods=['GET'])
+def export_spot_motion_job(job_id):
+    job = _get_spot_motion_job(job_id)
     if job is None:
         return jsonify({'success': False, 'error': '运动任务不存在'}), 404
     with job['lock']:
@@ -3367,13 +3639,13 @@ def export_slam_motion_job(job_id):
         zip_path,
         mimetype='application/zip',
         as_attachment=True,
-        download_name=f"slam_motion_{job_id}.zip",
+        download_name=f"spot_motion_{job_id}.zip",
         conditional=True
     )
 
 
 @app.route('/api/usb_slm/motion/upload', methods=['POST'])
-def upload_slam_motion_job_to_usb_slm():
+def upload_spot_motion_job_to_usb_slm():
     from usb_slm_control import (
         SLMDriverError,
         SLMSequenceUploadError,
@@ -3383,7 +3655,7 @@ def upload_slam_motion_job_to_usb_slm():
     )
 
     data = request.get_json(silent=True) or {}
-    job = _get_slam_motion_job(data.get('job_id', ''))
+    job = _get_spot_motion_job(data.get('job_id', ''))
     if job is None:
         return jsonify({'success': False, 'error': '运动任务不存在'}), 404
     if job['status'] != 'complete':
@@ -3415,7 +3687,7 @@ def upload_slam_motion_job_to_usb_slm():
             })
 
         controller = USB_SLMController.instance()
-        with SLAM_MOTION_USB_LOCK:
+        with SPOT_MOTION_USB_LOCK:
             transaction = controller.write_fmem_sequence(
                 prepared_frames,
                 steps,
@@ -3486,7 +3758,7 @@ if __name__ == '__main__':
     print("="*60 + "\n")
 
     # The reloader restarts this process on source changes and drops in-memory
-    # SLAM motion jobs while requests may still be in flight.
+    # Spot motion jobs while requests may still be in flight.
     app.run(
         debug=False,
         use_reloader=False,

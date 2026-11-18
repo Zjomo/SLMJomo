@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LCOS-SLM 专业控制面板 - 菲涅尔透镜相位图生成系统</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/pro_style.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/slam_motion.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/spot_motion.css') }}">
 </head>
 <body>
     <div class="app-container">
@@ -51,9 +51,9 @@
                             <span class="icon">⋯</span>
                             <span>三点聚焦（无透镜）</span>
                         </li>
-                        <li onclick="showModule('slam-motion')">
+                        <li onclick="showModule('spot-motion')">
                             <span class="icon">⟲</span>
-                            <span>SLAM 三光斑运动</span>
+                            <span>三光斑独立运动</span>
                         </li>
                         <li onclick="showModule('double-ring')">
                             <span class="icon">◎</span>
@@ -466,6 +466,57 @@
                                 <div class="param-item">
                                     <span class="param-label">照明变化行为</span>
                                     <strong>各光斑同步缩放并保持等强高斯分布</strong>
+                                </div>
+                            </div>
+
+                            <!-- 批量参数扫描（生成 ZIP） -->
+                            <div class="param-panel" id="batch_scan_panel">
+                                <h3>批量参数扫描（导出 ZIP）</h3>
+                                <div class="hint-text" style="margin-bottom:8px;font-size:12px;color:#666;">
+                                    光斑模板自动跟随当前阵列：<b>等间距模式</b>行数 = 光斑数量 n，X 表达式为系数×变量（扫描间距）；<b>自定义阵列</b>模式下每行 = 编辑器坐标×变量，即按缩放系数 s 收拢/展开（s: 1→0 收拢到中心）。取消勾选"跟随当前阵列"可手动编辑模板。打包内容：<code>frames/*.bmp</code> + 每帧坐标 CSV + <code>sequence.csv</code> + <code>manifest.json</code>。
+                                </div>
+                                <div class="usbslm-btn-row">
+                                    <label class="usbslm-loop-label">
+                                        <input type="checkbox" id="batch_follow" checked> 跟随当前阵列（自动更新模板行）
+                                    </label>
+                                </div>
+                                <div class="batch-scan-row batch-grid5">
+                                    <label>变量名 <input type="text" class="param-input" id="batch_var" value="d"></label>
+                                    <label>起点 <input type="number" class="param-input" id="batch_start" value="3.0" step="0.1"></label>
+                                    <label>终点 <input type="number" class="param-input" id="batch_stop" value="0.0" step="0.1"></label>
+                                    <label>步长 <input type="number" class="param-input" id="batch_step" value="0.1" min="0.0001" step="0.1"></label>
+                                    <label>每帧时长 (ms) <input type="number" class="param-input" id="batch_frame_ms" value="100" min="1" step="10"></label>
+                                </div>
+                                <div class="batch-scan-spots">
+                                    <div class="batch-scan-row batch-tpl-row batch-scan-spots-head">
+                                        <span>光斑</span><span>X (表达式)</span><span>Y (表达式)</span><span>权重</span>
+                                    </div>
+                                    <div id="batch_template_rows">
+                                        <div class="batch-scan-row batch-tpl-row">
+                                            <span>Q1</span>
+                                            <input type="text" class="param-input batch-tpl-input" data-slot="x" data-index="0" value="-d">
+                                            <input type="text" class="param-input batch-tpl-input" data-slot="y" data-index="0" value="0">
+                                            <input type="text" class="param-input batch-tpl-input" data-slot="w" data-index="0" value="1">
+                                        </div>
+                                        <div class="batch-scan-row batch-tpl-row">
+                                            <span>Q2</span>
+                                            <input type="text" class="param-input batch-tpl-input" data-slot="x" data-index="1" value="0">
+                                            <input type="text" class="param-input batch-tpl-input" data-slot="y" data-index="1" value="d">
+                                            <input type="text" class="param-input batch-tpl-input" data-slot="w" data-index="1" value="1">
+                                        </div>
+                                        <div class="batch-scan-row batch-tpl-row">
+                                            <span>Q3</span>
+                                            <input type="text" class="param-input batch-tpl-input" data-slot="x" data-index="2" value="d">
+                                            <input type="text" class="param-input batch-tpl-input" data-slot="y" data-index="2" value="0">
+                                            <input type="text" class="param-input batch-tpl-input" data-slot="w" data-index="2" value="1">
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="usbslm-btn-row" style="margin-top:10px;">
+                                    <button class="btn btn-primary" onclick="generateBatchSpots()">
+                                        <span class="icon">📦</span> 批量生成并下载 ZIP
+                                    </button>
+                                    <span class="hint-text" id="batch_status" style="font-size:12px;color:#666;">预览：间距 d = 3.0 → 0.0，3 点 × 共 31 帧</span>
                                 </div>
                             </div>
                         </div>
@@ -1258,117 +1309,117 @@
                     </div>
                 </section>
 
-                <!-- SLAM 三光斑独立运动模块 -->
-                <section class="module-card" id="slam-motion">
+                <!-- 三光斑独立运动模块 -->
+                <section class="module-card" id="spot-motion">
                     <div class="module-header">
-                        <h2>SLAM 三光斑独立运动</h2>
+                        <h2>三光斑独立运动</h2>
                     </div>
                     <div class="module-content">
-                        <div class="slam-motion-layout">
-                            <section class="slam-motion-pane" aria-labelledby="slam-microscope-title">
-                                <h3 id="slam-microscope-title">显微镜标定与材料</h3>
+                        <div class="spot-motion-layout">
+                            <section class="spot-motion-pane" aria-labelledby="motion-microscope-title">
+                                <h3 id="motion-microscope-title">显微镜标定与材料</h3>
                                 <p class="hint-text">导入显微镜图像后，在图中点击添加材料标记；设置原点，再将选中的材料分配给右侧光斑。</p>
-                                <div class="slam-image-input">
-                                    <button type="button" class="btn btn-secondary" onclick="document.getElementById('slam_image_input').click()">选择显微镜图像</button>
-                                    <input type="file" id="slam_image_input" accept="image/*" hidden>
-                                    <button type="button" class="btn btn-secondary" id="slam_camera_start_btn" title="启动摄像头实时画面">启动摄像头</button>
-                                    <button type="button" class="btn btn-secondary" id="slam_screen_start_btn" title="共享显微镜画面所在窗口或屏幕">共享屏幕</button>
-                                    <button type="button" class="btn btn-secondary" id="slam_camera_stop_btn" title="停止实时画面">停止实时</button>
-                                    <button type="button" class="btn btn-secondary" id="slam_roi_button" aria-pressed="false" title="在画面上拖拽选择 ROI 区域">选择 ROI</button>
-                                    <button type="button" class="btn btn-secondary slam-origin-button" id="slam_origin_button" aria-pressed="false">设置标定原点</button>
+                                <div class="motion-image-input">
+                                    <button type="button" class="btn btn-secondary" onclick="document.getElementById('motion_image_input').click()">选择显微镜图像</button>
+                                    <input type="file" id="motion_image_input" accept="image/*" hidden>
+                                    <button type="button" class="btn btn-secondary" id="motion_camera_start_btn" title="启动摄像头实时画面">启动摄像头</button>
+                                    <button type="button" class="btn btn-secondary" id="motion_screen_start_btn" title="共享显微镜画面所在窗口或屏幕">共享屏幕</button>
+                                    <button type="button" class="btn btn-secondary" id="motion_camera_stop_btn" title="停止实时画面">停止实时</button>
+                                    <button type="button" class="btn btn-secondary" id="motion_roi_button" aria-pressed="false" title="在画面上拖拽选择 ROI 区域">选择 ROI</button>
+                                    <button type="button" class="btn btn-secondary motion-origin-button" id="motion_origin_button" aria-pressed="false">设置标定原点</button>
                                 </div>
-                                <div class="slam-calibration-row">
-                                    <label for="slam_reference_distance_um">标尺实际长度（μm）
-                                        <input type="number" class="param-input" id="slam_reference_distance_um" value="100" min="0.000001" max="100000000" step="any" inputmode="decimal">
+                                <div class="motion-calibration-row">
+                                    <label for="motion_reference_distance_um">标尺实际长度（μm）
+                                        <input type="number" class="param-input" id="motion_reference_distance_um" value="100" min="0.000001" max="100000000" step="any" inputmode="decimal">
                                     </label>
-                                    <button type="button" class="btn btn-secondary" id="slam_scale_button" aria-pressed="false" title="依次点击 ROI 内标尺的两个端点">两点标定</button>
-                                    <output id="slam_scale_status" class="slam-scale-status" aria-live="polite">未完成距离标定</output>
+                                    <button type="button" class="btn btn-secondary" id="motion_scale_button" aria-pressed="false" title="依次点击 ROI 内标尺的两个端点">两点标定</button>
+                                    <output id="motion_scale_status" class="motion-scale-status" aria-live="polite">未完成距离标定</output>
                                 </div>
-                                <div class="slam-canvas-frame">
-                                    <canvas id="slam_microscope_canvas" width="960" height="640" tabindex="0" role="img" aria-label="实时显微镜画面或导入图像。可拖拽选择 ROI，点击标记材料、标定原点或两点距离。"></canvas>
+                                <div class="motion-canvas-frame">
+                                    <canvas id="motion_microscope_canvas" width="960" height="640" tabindex="0" role="img" aria-label="实时显微镜画面或导入图像。可拖拽选择 ROI，点击标记材料、标定原点或两点距离。"></canvas>
                                 </div>
-                                <div class="slam-spot-feedback">
-                                    <label for="slam_detection_radius_px">局部搜索半径（px）
-                                        <input type="number" class="param-input" id="slam_detection_radius_px" value="16" min="3" max="128" step="1">
+                                <div class="motion-spot-feedback">
+                                    <label for="motion_detection_radius_px">局部搜索半径（px）
+                                        <input type="number" class="param-input" id="motion_detection_radius_px" value="16" min="3" max="128" step="1">
                                     </label>
-                                    <label for="slam_feedback_gain">补偿增益
-                                        <input type="number" class="param-input" id="slam_feedback_gain" value="0.75" min="0.1" max="1" step="0.05">
+                                    <label for="motion_feedback_gain">补偿增益
+                                        <input type="number" class="param-input" id="motion_feedback_gain" value="0.75" min="0.1" max="1" step="0.05">
                                     </label>
-                                    <div class="slam-toolbar">
-                                        <button type="button" class="btn btn-secondary" id="slam_feedback_mode_btn" disabled>校准当前帧光斑</button>
-                                        <button type="button" class="btn btn-secondary" id="slam_apply_feedback_btn" disabled>应用位置补偿</button>
-                                        <button type="button" class="btn btn-secondary" id="slam_clear_feedback_btn" disabled>清除补偿</button>
+                                    <div class="motion-toolbar">
+                                        <button type="button" class="btn btn-secondary" id="motion_feedback_mode_btn" disabled>校准当前帧光斑</button>
+                                        <button type="button" class="btn btn-secondary" id="motion_apply_feedback_btn" disabled>应用位置补偿</button>
+                                        <button type="button" class="btn btn-secondary" id="motion_clear_feedback_btn" disabled>清除补偿</button>
                                     </div>
-                                    <output id="slam_feedback_report" class="slam-feedback-report" aria-live="polite">先生成一版路径相位帧，再测量当前帧的三个光斑。</output>
+                                    <output id="motion_feedback_report" class="motion-feedback-report" aria-live="polite">先生成一版路径相位帧，再测量当前帧的三个光斑。</output>
                                 </div>
-                                <div class="slam-calibration-row">
-                                    <label for="slam_pixels_per_um">标定比例（px/μm）
-                                        <input type="number" class="param-input" id="slam_pixels_per_um" value="1" min="0.000001" max="1000000" step="any" inputmode="decimal">
+                                <div class="motion-calibration-row">
+                                    <label for="motion_pixels_per_um">标定比例（px/μm）
+                                        <input type="number" class="param-input" id="motion_pixels_per_um" value="1" min="0.000001" max="1000000" step="any" inputmode="decimal">
                                     </label>
-                                    <label for="slam_um_per_px">换算比例（μm/px）
-                                        <input type="text" class="param-input" id="slam_um_per_px" value="1" readonly aria-readonly="true">
-                                    </label>
-                                </div>
-                                <div class="slam-calibration-row">
-                                    <label for="slam_focus_scale_x">焦平面 X 比例
-                                        <input type="number" class="param-input" id="slam_focus_scale_x" value="1" min="0.000001" max="1000000" step="any">
-                                    </label>
-                                    <label for="slam_focus_scale_y">焦平面 Y 比例
-                                        <input type="number" class="param-input" id="slam_focus_scale_y" value="1" min="0.000001" max="1000000" step="any">
+                                    <label for="motion_um_per_px">换算比例（μm/px）
+                                        <input type="text" class="param-input" id="motion_um_per_px" value="1" readonly aria-readonly="true">
                                     </label>
                                 </div>
-                                <label class="hint-text" for="slam_assign_select">选中材料
-                                    <select class="param-select" id="slam_assign_select">
+                                <div class="motion-calibration-row">
+                                    <label for="motion_focus_scale_x">焦平面 X 比例
+                                        <input type="number" class="param-input" id="motion_focus_scale_x" value="1" min="0.000001" max="1000000" step="any">
+                                    </label>
+                                    <label for="motion_focus_scale_y">焦平面 Y 比例
+                                        <input type="number" class="param-input" id="motion_focus_scale_y" value="1" min="0.000001" max="1000000" step="any">
+                                    </label>
+                                </div>
+                                <label class="hint-text" for="motion_assign_select">选中材料
+                                    <select class="param-select" id="motion_assign_select">
                                         <option value="">选择要分配的材料</option>
                                     </select>
                                 </label>
-                                <div class="slam-marker-list" id="slam_marker_list" aria-live="polite"></div>
+                                <div class="motion-marker-list" id="motion_marker_list" aria-live="polite"></div>
                             </section>
 
-                            <section class="slam-motion-pane" aria-labelledby="slam-focus-title">
-                                <h3 id="slam-focus-title">焦平面路径规划</h3>
+                            <section class="spot-motion-pane" aria-labelledby="motion-focus-title">
+                                <h3 id="motion-focus-title">焦平面路径规划</h3>
                                 <p class="hint-text">选择光斑后，在焦平面图中点击添加路径点。坐标单位为 μm，纵轴向上。</p>
-                                <div class="slam-spot-tabs" id="slam_spot_tabs" role="group" aria-label="选择要编辑的光斑">
+                                <div class="motion-spot-tabs" id="motion_spot_tabs" role="group" aria-label="选择要编辑的光斑">
                                     <button type="button" data-spot-index="0" aria-pressed="true">光斑 1</button>
                                     <button type="button" data-spot-index="1" aria-pressed="false">光斑 2</button>
                                     <button type="button" data-spot-index="2" aria-pressed="false">光斑 3</button>
                                 </div>
-                                <div class="slam-canvas-frame">
-                                    <canvas id="slam_focus_canvas" width="960" height="640" tabindex="0" role="application" aria-label="焦平面路径编辑画布。点击添加路径点，方向键移动十字光标，按 Enter 添加点，按 Backspace 撤销最后一点。"></canvas>
+                                <div class="motion-canvas-frame">
+                                    <canvas id="motion_focus_canvas" width="960" height="640" tabindex="0" role="application" aria-label="焦平面路径编辑画布。点击添加路径点，方向键移动十字光标，按 Enter 添加点，按 Backspace 撤销最后一点。"></canvas>
                                 </div>
-                                <div class="slam-calibration-row">
-                                    <label for="slam_focus_field_um">显示范围（±μm）
-                                        <input type="number" class="param-input" id="slam_focus_field_um" value="20" min="1" max="1000000" step="any">
+                                <div class="motion-calibration-row">
+                                    <label for="motion_focus_field_um">显示范围（±μm）
+                                        <input type="number" class="param-input" id="motion_focus_field_um" value="20" min="1" max="1000000" step="any">
                                     </label>
-                                    <div class="slam-path-controls" aria-label="路径编辑">
-                                        <button type="button" class="btn btn-secondary" id="slam_undo_waypoint" title="撤销当前光斑的最后一个路径点">撤销路径点</button>
-                                        <button type="button" class="btn btn-secondary" id="slam_clear_path" title="清除当前光斑的移动路径并保留材料起点">清除路径</button>
+                                    <div class="motion-path-controls" aria-label="路径编辑">
+                                        <button type="button" class="btn btn-secondary" id="motion_undo_waypoint" title="撤销当前光斑的最后一个路径点">撤销路径点</button>
+                                        <button type="button" class="btn btn-secondary" id="motion_clear_path" title="清除当前光斑的移动路径并保留材料起点">清除路径</button>
                                     </div>
                                 </div>
-                                <div class="slam-note">50× 为记录参数；坐标映射使用 px/μm 标定和焦平面比例。若样品平面与焦平面并非 1:1，请先测得比例并填写。</div>
+                                <div class="motion-note">50× 为记录参数；坐标映射使用 px/μm 标定和焦平面比例。若样品平面与焦平面并非 1:1，请先测得比例并填写。</div>
                             </section>
 
-                            <section class="slam-motion-pane" aria-labelledby="slam-parameters-title">
-                                <h3 id="slam-parameters-title">光学与运动参数</h3>
-                                <div class="slam-params-grid">
+                            <section class="spot-motion-pane" aria-labelledby="motion-parameters-title">
+                                <h3 id="motion-parameters-title">光学与运动参数</h3>
+                                <div class="motion-params-grid">
                                     <div class="param-item">
-                                        <label for="slam_focal_um"><span class="param-label">焦距（μm）</span>
-                                            <input type="number" class="param-input" id="slam_focal_um" value="1000" min="1" max="100000000" step="any">
+                                        <label for="motion_focal_um"><span class="param-label">焦距（μm）</span>
+                                            <input type="number" class="param-input" id="motion_focal_um" value="1000" min="1" max="100000000" step="any">
                                         </label>
                                     </div>
                                     <div class="param-item">
-                                        <label for="slam_wavelength_nm"><span class="param-label">波长（nm）</span>
-                                            <input type="number" class="param-input" id="slam_wavelength_nm" value="532" min="1" max="100000" step="any">
+                                        <label for="motion_wavelength_nm"><span class="param-label">波长（nm）</span>
+                                            <input type="number" class="param-input" id="motion_wavelength_nm" value="532" min="1" max="100000" step="any">
                                         </label>
                                     </div>
                                     <div class="param-item">
-                                        <label for="slam_magnification"><span class="param-label">倍镜</span>
-                                            <input type="number" class="param-input" id="slam_magnification" value="50" min="0.01" max="100000" step="any">
+                                        <label for="motion_magnification"><span class="param-label">倍镜</span>
+                                            <input type="number" class="param-input" id="motion_magnification" value="50" min="0.01" max="100000" step="any">
                                         </label>
                                     </div>
                                     <div class="param-item">
-                                        <label for="slam_algorithm"><span class="param-label">生成算法</span>
-                                            <select class="param-select" id="slam_algorithm">
+                                        <label for="motion_algorithm"><span class="param-label">生成算法</span>
+                                            <select class="param-select" id="motion_algorithm">
                                                 <option value="uniform_grating">通用等强光栅（照明鲁棒）</option>
                                                 <option value="gaussian_wgs" selected>高斯优化（指定光束）</option>
                                                 <option value="dammann">1×3 达曼光栅（快速）</option>
@@ -1377,85 +1428,85 @@
                                         </label>
                                     </div>
                                     <div class="param-item">
-                                        <label for="slam_phase_direction"><span class="param-label">相位方向</span>
-                                            <select class="param-select" id="slam_phase_direction">
+                                        <label for="motion_phase_direction"><span class="param-label">相位方向</span>
+                                            <select class="param-select" id="motion_phase_direction">
                                                 <option value="standard" selected>标准会聚</option>
                                                 <option value="inverted">反相（LUT 方向相反）</option>
                                             </select>
                                         </label>
                                     </div>
                                     <div class="param-item">
-                                        <label for="slam_beam_diameter_mm"><span class="param-label">SLM 入射光束直径（mm）</span>
-                                            <input type="number" class="param-input" id="slam_beam_diameter_mm" value="6" min="0.001" max="100" step="any">
+                                        <label for="motion_beam_diameter_mm"><span class="param-label">SLM 入射光束直径（mm）</span>
+                                            <input type="number" class="param-input" id="motion_beam_diameter_mm" value="6" min="0.001" max="100" step="any">
                                         </label>
                                     </div>
                                     <div class="param-item">
-                                        <label for="slam_spot_diameter_um"><span class="param-label">目标光斑 1/e² 直径（μm）</span>
-                                            <input type="number" class="param-input" id="slam_spot_diameter_um" value="6" min="5" max="8" step="0.1">
+                                        <label for="motion_spot_diameter_um"><span class="param-label">目标光斑 1/e² 直径（μm）</span>
+                                            <input type="number" class="param-input" id="motion_spot_diameter_um" value="6" min="5" max="8" step="0.1">
                                         </label>
                                     </div>
                                     <div class="param-item">
-                                        <label for="slam_speed_um_s"><span class="param-label">规划速度（μm/s）</span>
-                                            <input type="number" class="param-input" id="slam_speed_um_s" value="2" min="0.001" max="100000" step="any">
+                                        <label for="motion_speed_um_s"><span class="param-label">规划速度（μm/s）</span>
+                                            <input type="number" class="param-input" id="motion_speed_um_s" value="2" min="0.001" max="100000" step="any">
                                         </label>
                                     </div>
                                     <div class="param-item">
-                                        <label for="slam_frame_interval_ms"><span class="param-label">帧间隔（ms）</span>
-                                            <input type="number" class="param-input" id="slam_frame_interval_ms" value="100" min="1" max="60000" step="1">
+                                        <label for="motion_frame_interval_ms"><span class="param-label">帧间隔（ms）</span>
+                                            <input type="number" class="param-input" id="motion_frame_interval_ms" value="100" min="1" max="60000" step="1">
                                         </label>
                                     </div>
                                     <div class="param-item">
-                                        <label for="slam_iterations"><span class="param-label">WGS 迭代次数</span>
-                                            <input type="number" class="param-input" id="slam_iterations" value="30" min="1" max="200" step="1">
+                                        <label for="motion_iterations"><span class="param-label">WGS 迭代次数</span>
+                                            <input type="number" class="param-input" id="motion_iterations" value="30" min="1" max="200" step="1">
                                         </label>
                                     </div>
                                     <div class="param-item">
                                         <span class="param-label">SLM 分辨率（px）</span>
                                         <div class="resolution-inputs">
-                                            <label for="slam_width">宽（px）</label>
-                                            <input type="number" class="param-input" id="slam_width" value="1272" min="64" max="4096" step="1">
+                                            <label for="motion_width">宽（px）</label>
+                                            <input type="number" class="param-input" id="motion_width" value="1272" min="64" max="4096" step="1">
                                             <span>×</span>
-                                            <label for="slam_height">高（px）</label>
-                                            <input type="number" class="param-input" id="slam_height" value="1024" min="64" max="4096" step="1">
+                                            <label for="motion_height">高（px）</label>
+                                            <input type="number" class="param-input" id="motion_height" value="1024" min="64" max="4096" step="1">
                                         </div>
                                     </div>
                                 </div>
-                                <div class="slam-note" style="margin-top:10px">路径帧最多 200 张。实体播放受液晶响应、波长 LUT、设备校正图与 USB 切槽时序限制；2 μm/s 是规划速度，需在光路中验证实际速度和光斑尺寸。</div>
+                                <div class="motion-note" style="margin-top:10px">路径帧最多 200 张。实体播放受液晶响应、波长 LUT、设备校正图与 USB 切槽时序限制；2 μm/s 是规划速度，需在光路中验证实际速度和光斑尺寸。</div>
                             </section>
 
-                            <section class="slam-motion-pane" aria-labelledby="slam-output-title">
-                                <h3 id="slam-output-title">相位帧与解码预览</h3>
-                                <div class="slam-action-row">
-                                    <button type="button" class="btn btn-primary" id="slam_generate_btn">生成路径相位帧</button>
-                                    <button type="button" class="btn btn-secondary" id="slam_add_cgh_btn" disabled>加入 CGH 序列</button>
-                                    <button type="button" class="btn btn-download" id="slam_export_btn" disabled>导出 ZIP</button>
+                            <section class="spot-motion-pane" aria-labelledby="motion-output-title">
+                                <h3 id="motion-output-title">相位帧与解码预览</h3>
+                                <div class="motion-action-row">
+                                    <button type="button" class="btn btn-primary" id="motion_generate_btn">生成路径相位帧</button>
+                                    <button type="button" class="btn btn-secondary" id="motion_add_cgh_btn" disabled>加入 CGH 序列</button>
+                                    <button type="button" class="btn btn-download" id="motion_export_btn" disabled>导出 ZIP</button>
                                 </div>
-                                <progress class="slam-progress" id="slam_progress" value="0" max="100" aria-label="相位帧生成进度"></progress>
-                                <div class="slam-motion-status" id="slam_status" role="status" aria-live="polite">导入显微镜图像，设置标定原点并为三个光斑规划路径。</div>
-                                <div class="slam-preview-grid">
-                                    <figure class="slam-preview-box">
+                                <progress class="motion-progress" id="motion_progress" value="0" max="100" aria-label="相位帧生成进度"></progress>
+                                <div class="spot-motion-status" id="motion_status" role="status" aria-live="polite">导入显微镜图像，设置标定原点并为三个光斑规划路径。</div>
+                                <div class="motion-preview-grid">
+                                    <figure class="motion-preview-box">
                                         <figcaption>当前相位图</figcaption>
-                                        <img id="slam_phase_preview" alt="当前帧的 SLM 相位图">
+                                        <img id="motion_phase_preview" alt="当前帧的 SLM 相位图">
                                     </figure>
-                                    <figure class="slam-preview-box">
+                                    <figure class="motion-preview-box">
                                         <figcaption>傅里叶重建结果</figcaption>
-                                        <img id="slam_recon_preview" alt="当前帧的傅里叶重建结果">
+                                        <img id="motion_recon_preview" alt="当前帧的傅里叶重建结果">
                                     </figure>
                                 </div>
-                                <div class="slam-action-row" aria-label="预览帧导航">
-                                    <button type="button" class="btn btn-secondary" id="slam_preview_prev" disabled aria-label="上一帧">上一帧</button>
-                                    <output class="slam-frame-indicator" id="slam_frame_counter" aria-live="polite">帧 0/0</output>
-                                    <button type="button" class="btn btn-secondary" id="slam_preview_next" disabled aria-label="下一帧">下一帧</button>
+                                <div class="motion-action-row" aria-label="预览帧导航">
+                                    <button type="button" class="btn btn-secondary" id="motion_preview_prev" disabled aria-label="上一帧">上一帧</button>
+                                    <output class="motion-frame-indicator" id="motion_frame_counter" aria-live="polite">帧 0/0</output>
+                                    <button type="button" class="btn btn-secondary" id="motion_preview_next" disabled aria-label="下一帧">下一帧</button>
                                 </div>
-                                <div class="slam-path-controls">
-                                    <label for="slam_usb_start_slot">USB FMem 起始槽位（0–818）
-                                        <input type="number" class="param-input" id="slam_usb_start_slot" value="10" min="0" max="818" step="1">
+                                <div class="motion-path-controls">
+                                    <label for="motion_usb_start_slot">USB FMem 起始槽位（0–818）
+                                        <input type="number" class="param-input" id="motion_usb_start_slot" value="10" min="0" max="818" step="1">
                                     </label>
-                                    <label class="paint-loop-option" for="slam_usb_overwrite">
-                                        <input type="checkbox" id="slam_usb_overwrite">
+                                    <label class="paint-loop-option" for="motion_usb_overwrite">
+                                        <input type="checkbox" id="motion_usb_overwrite">
                                         确认覆盖指定槽位
                                     </label>
-                                    <button type="button" class="btn btn-secondary" id="slam_upload_btn" disabled>上传并播放</button>
+                                    <button type="button" class="btn btn-secondary" id="motion_upload_btn" disabled>上传并播放</button>
                                 </div>
                                 <p class="hint-text">USB 播放使用现有 USB_SLMControl 连接。FMem 为易失存储；上传前须确认覆盖槽位，模拟驱动不会作为实体上传成功。</p>
                             </section>
@@ -2354,7 +2405,9 @@
     <script src="{{ url_for('static', filename='js/spot_array.js') }}"></script>
     <script src="{{ url_for('static', filename='js/paint_board.js') }}"></script>
     <script src="{{ url_for('static', filename='js/usb_slm.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/slam_spot_vision.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/slam_motion.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/module_theory.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/batch_export.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/spot_vision.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/spot_motion.js') }}"></script>
 </body>
 </html>

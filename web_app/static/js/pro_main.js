@@ -1641,14 +1641,14 @@ function imageBlobToObjectUrl(blob) {
     return window.URL.createObjectURL(blob);
 }
 
-async function appendSLAMJobToCGH(jobId) {
-    const statusResponse = await fetch(`/api/slam/motion/jobs/${encodeURIComponent(jobId)}`);
+async function appendMotionJobToCGH(jobId) {
+    const statusResponse = await fetch(`/api/spot_motion/jobs/${encodeURIComponent(jobId)}`);
     const status = await statusResponse.json();
     if (!statusResponse.ok || status.status !== 'complete' || !Array.isArray(status.frames)) {
-        throw new Error(status.error || 'SLAM 任务尚未完整生成');
+        throw new Error(status.error || '运动任务尚未完整生成');
     }
     if (status.frames.length !== Number(status.frame_count)) {
-        throw new Error('SLAM 任务帧列表不完整');
+        throw new Error('运动任务帧列表不完整');
     }
     if (AppState.cghVideo.frames.length + status.frames.length > CGH_VIDEO_MAX_FRAMES) {
         throw new Error(`CGH 视频序列最多支持 ${CGH_VIDEO_MAX_FRAMES} 帧，当前剩余容量不足`);
@@ -1662,7 +1662,7 @@ async function appendSLAMJobToCGH(jobId) {
                 fetch(frame.reconstruction_url)
             ]);
             if (!phaseResponse.ok || !reconstructionResponse.ok) {
-                throw new Error(`读取 SLAM 第 ${index + 1} 帧失败`);
+                throw new Error(`读取运动帧第 ${index + 1} 帧失败`);
             }
             const [phaseBlob, reconstructionBlob] = await Promise.all([
                 phaseResponse.blob(),
@@ -1684,12 +1684,12 @@ async function appendSLAMJobToCGH(jobId) {
                 target: null,
                   phase: phaseUrl,
                   regenerated: reconstructionUrl,
-                filename: frame.phase_file || `slam_${jobId}_${index + 1}.bmp`,
-                label: `SLAM ${index + 1}/${status.frames.length} · t=${Number(frame.time_s).toFixed(3)} s`,
+                filename: frame.phase_file || `motion_${jobId}_${index + 1}.bmp`,
+                label: `帧 ${index + 1}/${status.frames.length} · t=${Number(frame.time_s).toFixed(3)} s`,
                 duration_ms: frame.duration_ms,
                 time_s: frame.time_s,
                 spots: frame.spots,
-                source: 'slam',
+                source: 'motion',
                 source_job_id: jobId
             });
         }
@@ -1710,7 +1710,7 @@ async function appendSLAMJobToCGH(jobId) {
 function removeCGHVideoFrame(id) {
     const wasActive = AppState.cghVideo.playing || AppState.cghVideo.index > 0;
     const removed = AppState.cghVideo.frames.find(frame => frame.id === id);
-    if (removed?.source === 'slam') {
+    if (removed?.source === 'motion') {
         [removed.phase, removed.regenerated].forEach(url => {
             if (url && url.startsWith('blob:')) URL.revokeObjectURL(url);
         });
@@ -1732,7 +1732,7 @@ function moveCGHVideoFrame(id, direction) {
 function clearCGHVideoFrames() {
     if (!AppState.cghVideo.frames.length) return;
     stopCGHVideo();
-    AppState.cghVideo.frames.filter(frame => frame.source === 'slam').forEach(frame => {
+    AppState.cghVideo.frames.filter(frame => frame.source === 'motion').forEach(frame => {
         [frame.phase, frame.regenerated].forEach(url => {
             if (url && url.startsWith('blob:')) URL.revokeObjectURL(url);
         });
@@ -2570,7 +2570,7 @@ function serializeProjectSequenceItem(item, imageBudget) {
 
 function serializeProjectCGHVideo(imageBudget) {
     return {
-        frames: (AppState.cghVideo?.frames || []).filter(frame => frame.source !== 'slam').map((frame, index) => ({
+        frames: (AppState.cghVideo?.frames || []).filter(frame => frame.source !== 'motion').map((frame, index) => ({
             id: frame.id,
             label: typeof frame.label === 'string' ? frame.label.slice(0, 200) : '',
             target: serializeProjectImage(
@@ -2642,14 +2642,14 @@ function saveWorkflowProject() {
                 serializeProjectSequenceItem(item, imageBudget)
             ),
             cgh_video: serializeProjectCGHVideo(imageBudget),
-            slam_motion: typeof window !== 'undefined' &&
-                typeof window.SLAMMotion?.getProjectState === 'function'
+            spot_motion: typeof window !== 'undefined' &&
+                typeof window.SpotMotion?.getProjectState === 'function'
                 ? (() => {
-                    const motion = window.SLAMMotion.getProjectState();
+                    const motion = window.SpotMotion.getProjectState();
                     return {
                         ...motion,
                         image_data_url: serializeProjectImage(
-                            motion.image_data_url, imageBudget, 'SLAM 显微镜图像'
+                            motion.image_data_url, imageBudget, '显微镜图像'
                         )
                     };
                 })()
@@ -3016,17 +3016,27 @@ async function restoreWorkflowProject(project) {
     const cgh = project.version >= 2
         ? await restoreProjectCGH(project.cgh, imageBudget, currentOutput)
         : await restoreProjectCGH(null, imageBudget);
+    // 兼容旧项目文件：slam_ 命名迁移到 spot_motion
+    if (project.version >= 2 && project.cgh_video?.frames?.length) {
+        project.cgh_video.frames.forEach(frame => {
+            if (frame.source === 'slam') frame.source = 'motion';
+        });
+    }
+    if (project.version >= 2 && project.slam_motion && !project.spot_motion) {
+        project.spot_motion = project.slam_motion;
+        delete project.slam_motion;
+    }
     const cghVideoFrames = project.version >= 2
         ? await restoreProjectCGHVideo(project.cgh_video, imageBudget)
         : [];
-    let slamMotion = project.version >= 2 && project.slam_motion
-        ? project.slam_motion
+    let spotMotion = project.version >= 2 && project.spot_motion
+        ? project.spot_motion
         : null;
-    if (slamMotion) {
+    if (spotMotion) {
         const microscope = await loadValidatedProjectImage(
-            slamMotion.image_data_url, imageBudget, 'SLAM 显微镜图像'
+            spotMotion.image_data_url, imageBudget, '显微镜图像'
         );
-        slamMotion = { ...slamMotion, image_data_url: microscope?.data || null };
+        spotMotion = { ...spotMotion, image_data_url: microscope?.data || null };
     }
     const spotArraySnapshot = Object.prototype.hasOwnProperty.call(project, 'spot_array')
         ? project.spot_array
@@ -3039,8 +3049,8 @@ async function restoreWorkflowProject(project) {
         : null;
 
     if (typeof window !== 'undefined' &&
-            typeof window.SLAMMotion?.restoreProjectState === 'function') {
-        await window.SLAMMotion.restoreProjectState(slamMotion || {
+            typeof window.SpotMotion?.restoreProjectState === 'function') {
+        await window.SpotMotion.restoreProjectState(spotMotion || {
             version: 1,
             image_data_url: null,
             markers: [],
@@ -3087,7 +3097,7 @@ async function restoreWorkflowProject(project) {
     AppState.cghData = cgh.data;
     restoreProjectCGHView(cgh);
     stopCGHVideo();
-    AppState.cghVideo.frames.filter(frame => frame.source === 'slam').forEach(frame => {
+    AppState.cghVideo.frames.filter(frame => frame.source === 'motion').forEach(frame => {
         [frame.phase, frame.regenerated].forEach(url => {
             if (url && url.startsWith('blob:')) URL.revokeObjectURL(url);
         });
@@ -3096,9 +3106,9 @@ async function restoreWorkflowProject(project) {
     AppState.cghVideo.index = 0;
     AppState.cghVideo.calculating = false;
     renderCGHVideoFrames();
-    if (slamMotion && typeof window !== 'undefined' &&
-            typeof window.SLAMMotion?.restoreProjectState === 'function') {
-        showNotification('SLAM 标定与路径已恢复；需要重新生成相位帧后加入 CGH 序列', 'info');
+    if (spotMotion && typeof window !== 'undefined' &&
+            typeof window.SpotMotion?.restoreProjectState === 'function') {
+        showNotification('标定与路径已恢复；需要重新生成相位帧后加入 CGH 序列', 'info');
     }
     const placeholder = document.querySelector('.preview-container .placeholder');
     if (currentOutput) {

@@ -30,7 +30,7 @@ sh start.sh
 python app.py
 ```
 
-默认关闭 Flask 调试器和自动重载，避免代码监视器重启进程时中断在途 API 请求或清空 SLAM 运动任务。修改 Python 后需手动重启服务。
+默认关闭 Flask 调试器和自动重载，避免代码监视器重启进程时中断在途 API 请求或清空运动任务。修改 Python 后需手动重启服务。
 
 For the dependency versions tested on Windows x64 with CPython 3.12, install `requirements-win-py312-x64.lock` instead of the open-range `requirements.txt`. Linux/macOS installations use `requirements.txt`; that platform matrix has not yet been verified in a clean environment.
 
@@ -418,9 +418,9 @@ The browser test starts Flask on an ephemeral localhost port and asserts that it
 **技术支持**: 基于LCOS-SLM空间光调制器技术
 **最后更新**: 2026-07-28
 
-## SLAM 三光斑独立运动
+## 三光斑独立运动
 
-专业版新增显微镜图像/摄像头/屏幕共享输入、ROI 区域选择、两点已知距离自动标定 μm/px、三个材料/光斑分配、独立二维路径规划、逐帧相位生成、傅里叶重建预览及 CGH 视频序列交接。实时采集由浏览器本地媒体权限控制；保存项目时会保存当前 ROI 画面快照。功能设计、参数解释、算法限制、项目保存策略和 USB_SLMControl 使用说明见 [SLAM 三光斑独立运动计划](../docs/slam-three-spot-motion-plan.md) 与 [专业版指南](PRO_GUIDE.md)。
+专业版新增显微镜图像/摄像头/屏幕共享输入、ROI 区域选择、两点已知距离自动标定 μm/px、三个材料/光斑分配、独立二维路径规划、逐帧相位生成、傅里叶重建预览及 CGH 视频序列交接。实时采集由浏览器本地媒体权限控制；保存项目时会保存当前 ROI 画面快照。功能设计、参数解释、算法限制、项目保存策略和 USB_SLMControl 使用说明见 [三光斑独立运动计划](../docs/motion-three-spot-motion-plan.md) 与 [专业版指南](PRO_GUIDE.md)。
 
 生成基准序列后，可选择与实体显示一致的当前帧，逐个点选显微镜中的三个亮斑，按局部亮度加权质心测量位置偏差；确认后将每个偏差按补偿增益施加到该光斑整条路径并重新生成 CGH 相位帧。该流程只做局部光斑位置测量，不解析材料或整幅图像，也不在硬件播放中自动闭环追踪。
 

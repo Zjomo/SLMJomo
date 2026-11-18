@@ -344,56 +344,56 @@ async function run() {
     assert.equal(restored[1].target, pngA);
     assert.equal(budget3.pixels, 80);
 
-    // ---------- 8. SLAM 预计算相位序列交接 ----------
-    const slamFrames = [
+    // ---------- 8. 运动模块预计算相位序列交接 ----------
+    const motionFrames = [
         { phase_url: '/phase/0', reconstruction_url: '/recon/0', time_s: 0, duration_ms: 120, spots: [] },
         { phase_url: '/phase/1', reconstruction_url: '/recon/1', time_s: 0.12, duration_ms: 100, spots: [] }
     ];
-    const slamRequests = [];
+    const motionRequests = [];
     vm.runInContext('AppState.cghVideo.frames = [];', context);
     context.fetch = async url => {
-        slamRequests.push(url);
-        if (url === '/api/slam/motion/jobs/job-1') {
-            return { ok: true, json: async () => ({ status: 'complete', frame_count: 2, frames: slamFrames }) };
+        motionRequests.push(url);
+        if (url === '/api/spot_motion/jobs/job-1') {
+            return { ok: true, json: async () => ({ status: 'complete', frame_count: 2, frames: motionFrames }) };
         }
         return {
             ok: true,
             blob: async () => ({ result: url.startsWith('/phase') ? pngA : pngB })
         };
     };
-    const added = await context.appendSLAMJobToCGH('job-1');
+    const added = await context.appendMotionJobToCGH('job-1');
     assert.equal(added, 2);
     assert.equal(vm.runInContext('AppState.cghVideo.frames.length', context), 2);
     assert.match(vm.runInContext('AppState.cghVideo.frames[0].phase', context), /^blob:/);
     assert.match(vm.runInContext('AppState.cghVideo.frames[0].regenerated', context), /^blob:/);
     assert.equal(vm.runInContext('AppState.cghVideo.frames[0].duration_ms', context), 120);
-    assert.equal(vm.runInContext('AppState.cghVideo.frames[0].source', context), 'slam');
+    assert.equal(vm.runInContext('AppState.cghVideo.frames[0].source', context), 'motion');
     assert.equal(elements.get('cgh_video_display_mode').value, 'regenerated');
-    assert.equal(slamRequests.length, 5, 'one job status and two assets per frame');
+    assert.equal(motionRequests.length, 5, 'one job status and two assets per frame');
 
     vm.runInContext('AppState.cghVideo.frames = Array.from({length: 199}, () => ({ phase: pngA }));', context);
-    const requestCountBeforeCapacityCheck = slamRequests.length;
-    await assert.rejects(context.appendSLAMJobToCGH('job-1'), /容量不足/);
-    assert.equal(slamRequests.length, requestCountBeforeCapacityCheck + 1,
+    const requestCountBeforeCapacityCheck = motionRequests.length;
+    await assert.rejects(context.appendMotionJobToCGH('job-1'), /容量不足/);
+    assert.equal(motionRequests.length, requestCountBeforeCapacityCheck + 1,
         'capacity is checked before downloading frame assets');
 
     vm.runInContext('AppState.cghVideo.frames = [];', context);
-    await context.appendSLAMJobToCGH('job-1');
+    await context.appendMotionJobToCGH('job-1');
     const phaseObjectUrl = vm.runInContext('AppState.cghVideo.frames[0].phase', context);
     vm.runInContext('removeCGHVideoFrame(AppState.cghVideo.frames[0].id)', context);
-    assert.ok(revokedObjectUrls.includes(phaseObjectUrl), 'removing a SLAM frame releases its object URL');
+    assert.ok(revokedObjectUrls.includes(phaseObjectUrl), 'removing a motion frame releases its object URL');
 
     // A reconstruction URL failure must also release the phase URL created
     // immediately before it.
     vm.runInContext('AppState.cghVideo.frames = [];', context);
     const revokedBeforePartialImport = revokedObjectUrls.length;
     throwOnObjectUrlCall = objectUrlCalls + 2;
-    await assert.rejects(context.appendSLAMJobToCGH('job-1'), /simulated object URL failure/);
+    await assert.rejects(context.appendMotionJobToCGH('job-1'), /simulated object URL failure/);
     throwOnObjectUrlCall = null;
     assert.equal(revokedObjectUrls.length, revokedBeforePartialImport + 1);
     assert.match(revokedObjectUrls.at(-1), /^blob:/);
 
-    process.stdout.write('Passed CGH video sequence and SLAM handoff checks.\n');
+    process.stdout.write('Passed CGH video sequence and motion handoff checks.\n');
 }
 
 run().catch(error => {

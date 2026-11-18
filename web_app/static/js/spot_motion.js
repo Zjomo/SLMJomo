@@ -73,40 +73,40 @@
     }
 
     function setStatus(message, kind) {
-        const output = byId('slam_status');
+        const output = byId('motion_status');
         if (!output) return;
         output.textContent = message;
         output.dataset.state = kind || 'info';
     }
 
     function setProgress(value, label) {
-        const progress = byId('slam_progress');
+        const progress = byId('motion_progress');
         if (progress) {
             progress.max = 100;
             progress.value = Math.max(0, Math.min(100, Number(value) || 0));
             progress.setAttribute('aria-label', label || '相位帧生成进度');
         }
         if (label) {
-            const output = byId('slam_status');
+            const output = byId('motion_status');
             if (output) output.textContent = label;
         }
     }
 
     function activeInputsDisabled(disabled) {
-        ['slam_generate_btn', 'slam_image_input', 'slam_origin_button', 'slam_assign_select',
-            'slam_focus_canvas'].forEach(id => {
+        ['motion_generate_btn', 'motion_image_input', 'motion_origin_button', 'motion_assign_select',
+            'motion_focus_canvas'].forEach(id => {
             const element = byId(id);
             if (element) element.disabled = !!disabled;
         });
-        const tabs = byId('slam_spot_tabs');
+        const tabs = byId('motion_spot_tabs');
         if (tabs) tabs.querySelectorAll('button').forEach(button => { button.disabled = !!disabled; });
-        const generate = byId('slam_generate_btn');
+        const generate = byId('motion_generate_btn');
         if (generate) generate.disabled = !!disabled;
     }
 
     function assignControlsEnabled(enabled) {
-        ['slam_add_cgh_btn', 'slam_export_btn', 'slam_upload_btn',
-            'slam_preview_prev', 'slam_preview_next', 'slam_feedback_mode_btn'].forEach(id => {
+        ['motion_add_cgh_btn', 'motion_export_btn', 'motion_upload_btn',
+            'motion_preview_prev', 'motion_preview_next', 'motion_feedback_mode_btn'].forEach(id => {
             const element = byId(id);
             if (element) element.disabled = !enabled;
         });
@@ -114,9 +114,9 @@
     }
 
     function updateFeedbackButtons() {
-        const mode = byId('slam_feedback_mode_btn');
-        const apply = byId('slam_apply_feedback_btn');
-        const clear = byId('slam_clear_feedback_btn');
+        const mode = byId('motion_feedback_mode_btn');
+        const apply = byId('motion_apply_feedback_btn');
+        const clear = byId('motion_clear_feedback_btn');
         const ready = state.feedbackMeasurements.every(item =>
             item && item.frame_index === state.previewIndex);
         if (mode) mode.disabled = !state.jobId || !state.jobFrames.length ||
@@ -131,9 +131,9 @@
         return {
             origin_x_px: Number(state.origin.x_px),
             origin_y_px: Number(state.origin.y_px),
-            pixels_per_um: numberValue('slam_pixels_per_um', NaN),
-            focus_scale_x: numberValue('slam_focus_scale_x', 1),
-            focus_scale_y: numberValue('slam_focus_scale_y', 1)
+            pixels_per_um: numberValue('motion_pixels_per_um', NaN),
+            focus_scale_x: numberValue('motion_focus_scale_x', 1),
+            focus_scale_y: numberValue('motion_focus_scale_y', 1)
         };
     }
 
@@ -145,7 +145,7 @@
     }
 
     function setFeedbackReport(message, stateName) {
-        const report = byId('slam_feedback_report');
+        const report = byId('motion_feedback_report');
         if (!report) return;
         report.textContent = message;
         report.dataset.state = stateName || 'info';
@@ -155,7 +155,7 @@
         state.feedbackOffsets = [{ x_um: 0, y_um: 0 }, { x_um: 0, y_um: 0 }, { x_um: 0, y_um: 0 }];
         state.feedbackMeasurements = [null, null, null];
         state.feedbackMode = false;
-        const button = byId('slam_feedback_mode_btn');
+        const button = byId('motion_feedback_mode_btn');
         if (button) {
             button.classList.remove('is-active');
             button.setAttribute('aria-pressed', 'false');
@@ -169,8 +169,8 @@
     }
 
     function scaleCalibration() {
-        const scale = numberValue('slam_pixels_per_um', NaN);
-        const reciprocal = byId('slam_um_per_px');
+        const scale = numberValue('motion_pixels_per_um', NaN);
+        const reciprocal = byId('motion_um_per_px');
         if (reciprocal) {
             reciprocal.value = Number.isFinite(scale) && scale > 0
                 ? (1 / scale).toPrecision(6)
@@ -208,10 +208,10 @@
 
     function sampleToFocusUm(xPx, yPx) {
         if (!state.origin) return null;
-        const pxPerUm = numberValue('slam_pixels_per_um', NaN);
+        const pxPerUm = numberValue('motion_pixels_per_um', NaN);
         if (!(pxPerUm > 0) || !Number.isFinite(pxPerUm)) return null;
-        const xScale = numberValue('slam_focus_scale_x', 1);
-        const yScale = numberValue('slam_focus_scale_y', 1);
+        const xScale = numberValue('motion_focus_scale_x', 1);
+        const yScale = numberValue('motion_focus_scale_y', 1);
         return {
             x_um: ((xPx - state.origin.x_px) / pxPerUm) * xScale,
             y_um: ((state.origin.y_px - yPx) / pxPerUm) * yScale
@@ -219,7 +219,7 @@
     }
 
     function drawMicroscope() {
-        const canvas = byId('slam_microscope_canvas');
+        const canvas = byId('motion_microscope_canvas');
         if (!canvas) return;
         canvas.classList?.toggle('roi-selecting', state.roiMode);
         canvas.classList?.toggle('calibration-selecting', state.scaleMode);
@@ -345,13 +345,13 @@
     }
 
     function drawFocusPlot() {
-        const canvas = byId('slam_focus_canvas');
+        const canvas = byId('motion_focus_canvas');
         if (!canvas) return;
         const context = canvas.getContext('2d');
         if (!context) return;
         const width = canvas.width;
         const height = canvas.height;
-        const field = Math.max(1, numberValue('slam_focus_field_um', 20));
+        const field = Math.max(1, numberValue('motion_focus_field_um', 20));
         const pad = 34;
         const plotW = width - pad * 2;
         const plotH = height - pad * 2;
@@ -434,8 +434,8 @@
     }
 
     function renderMarkers() {
-        const list = byId('slam_marker_list');
-        const select = byId('slam_assign_select');
+        const list = byId('motion_marker_list');
+        const select = byId('motion_assign_select');
         if (!list) return;
 
         const priorValue = state.selectedMarkerId || '';
@@ -450,18 +450,18 @@
 
         if (!state.markers.length) {
             const empty = document.createElement('p');
-            empty.className = 'slam-empty-state';
+            empty.className = 'motion-empty-state';
             empty.textContent = '尚未标记材料';
             list.append(empty);
         }
 
         state.markers.forEach((marker, index) => {
             const row = document.createElement('div');
-            row.className = 'slam-marker-row' +
+            row.className = 'motion-marker-row' +
                 (marker.id === state.selectedMarkerId ? ' is-selected' : '');
             const choose = document.createElement('button');
             choose.type = 'button';
-            choose.className = 'slam-marker-select';
+            choose.className = 'motion-marker-select';
             choose.textContent = marker.name;
             choose.setAttribute('aria-pressed', String(marker.id === state.selectedMarkerId));
             choose.addEventListener('click', () => selectMarker(marker.id));
@@ -472,7 +472,7 @@
                 : `${marker.x_px.toFixed(0)}, ${marker.y_px.toFixed(0)} px`;
             const remove = document.createElement('button');
             remove.type = 'button';
-            remove.className = 'slam-marker-remove';
+            remove.className = 'motion-marker-remove';
             remove.textContent = '×';
             remove.title = `删除 ${marker.name}`;
             remove.setAttribute('aria-label', `删除 ${marker.name}`);
@@ -495,7 +495,7 @@
 
     function selectMarker(markerId) {
         state.selectedMarkerId = markerId;
-        const select = byId('slam_assign_select');
+        const select = byId('motion_assign_select');
         if (select) select.value = markerId;
         renderMarkers();
     }
@@ -533,7 +533,7 @@
     }
 
     function syncSpotTabs() {
-        const container = byId('slam_spot_tabs');
+        const container = byId('motion_spot_tabs');
         if (!container) return;
         container.querySelectorAll('[data-spot-index]').forEach(button => {
             const index = Number(button.dataset.spotIndex);
@@ -559,14 +559,14 @@
         state.markers.push(marker);
         state.selectedMarkerId = marker.id;
         renderMarkers();
-        const select = byId('slam_assign_select');
+        const select = byId('motion_assign_select');
         if (select) select.value = marker.id;
         setStatus(`${marker.name} 已标记`, 'success');
     }
 
     function beginSpotFeedback() {
         if (!state.image || !state.origin ||
-                !(numberValue('slam_pixels_per_um', NaN) > 0)) {
+                !(numberValue('motion_pixels_per_um', NaN) > 0)) {
             notify('请先准备显微镜画面、标定原点和 px/μm 比例', 'warning');
             return false;
         }
@@ -582,7 +582,7 @@
         state.roiMode = false;
         state.scaleMode = false;
         state.originMode = false;
-        ['slam_roi_button', 'slam_scale_button', 'slam_origin_button'].forEach(id => {
+        ['motion_roi_button', 'motion_scale_button', 'motion_origin_button'].forEach(id => {
             const modeButton = byId(id);
             if (modeButton) {
                 modeButton.classList.remove('is-active');
@@ -591,7 +591,7 @@
         });
         state.feedbackMode = true;
         state.feedbackMeasurements = [null, null, null];
-        const button = byId('slam_feedback_mode_btn');
+        const button = byId('motion_feedback_mode_btn');
         if (button) {
             button.classList.add('is-active');
             button.setAttribute('aria-pressed', 'true');
@@ -639,11 +639,11 @@
     }
 
     function measureSpotAt(point) {
-        const vision = window.SLAMSpotVision;
+        const vision = window.SpotVision;
         if (!vision || typeof vision.estimateBrightSpot !== 'function') {
             throw new Error('光斑检测模块尚未加载');
         }
-        const radius = numberValue('slam_detection_radius_px', 16);
+        const radius = numberValue('motion_detection_radius_px', 16);
         if (!Number.isInteger(radius) || radius < 3 || radius > 128) {
             throw new Error('局部搜索半径须为 3–128 px');
         }
@@ -679,7 +679,7 @@
             item && item.frame_index === state.previewIndex)) {
             throw new Error('请在同一帧中完成三个光斑的测量');
         }
-        const gain = numberValue('slam_feedback_gain', 0.75);
+        const gain = numberValue('motion_feedback_gain', 0.75);
         if (!Number.isFinite(gain) || gain < 0.1 || gain > 1) {
             throw new Error('补偿增益须在 0.1–1 之间');
         }
@@ -688,7 +688,7 @@
             state.feedbackOffsets[index].y_um -= measurement.error_y_um * gain;
         });
         state.feedbackMode = false;
-        const button = byId('slam_feedback_mode_btn');
+        const button = byId('motion_feedback_mode_btn');
         if (button) {
             button.classList.remove('is-active');
             button.setAttribute('aria-pressed', 'false');
@@ -706,7 +706,7 @@
         state.feedbackOffsets = [{ x_um: 0, y_um: 0 }, { x_um: 0, y_um: 0 }, { x_um: 0, y_um: 0 }];
         state.feedbackMeasurements = [null, null, null];
         state.feedbackMode = false;
-        const button = byId('slam_feedback_mode_btn');
+        const button = byId('motion_feedback_mode_btn');
         if (button) {
             button.classList.remove('is-active');
             button.setAttribute('aria-pressed', 'false');
@@ -718,7 +718,7 @@
     }
 
     function clickMicroscope(event) {
-        const canvas = byId('slam_microscope_canvas');
+        const canvas = byId('motion_microscope_canvas');
         const point = canvas && sourcePointFromCanvas(canvas, event);
         if (!point) return;
         if (state.suppressMicroscopeClick) {
@@ -746,23 +746,23 @@
                     state.scalePoints[1].x_px - state.scalePoints[0].x_px,
                     state.scalePoints[1].y_px - state.scalePoints[0].y_px
                 );
-                const referenceUm = numberValue('slam_reference_distance_um', NaN);
+                const referenceUm = numberValue('motion_reference_distance_um', NaN);
                 if (!(distancePx >= 1) || !(referenceUm > 0)) {
                     state.scalePoints = [];
                     setStatus('标定失败：端点距离至少 1 px，参考长度必须大于 0 μm', 'error');
                 } else {
                     const pxPerUm = distancePx / referenceUm;
                     resetFeedbackForCalibrationChange();
-                    const input = byId('slam_pixels_per_um');
+                    const input = byId('motion_pixels_per_um');
                     if (input) input.value = String(Number(pxPerUm.toPrecision(8)));
                     state.scaleMode = false;
                     state.scalePoints = [];
-                    const button = byId('slam_scale_button');
+                    const button = byId('motion_scale_button');
                     if (button) {
                         button.classList.remove('is-active');
                         button.setAttribute('aria-pressed', 'false');
                     }
-                    const output = byId('slam_scale_status');
+                    const output = byId('motion_scale_status');
                     if (output) output.textContent = `${(1 / pxPerUm).toPrecision(6)} μm/px`;
                     scaleCalibration();
                     setStatus(`两点标定完成：${pxPerUm.toPrecision(6)} px/μm`, 'success');
@@ -775,7 +775,7 @@
             resetFeedbackForCalibrationChange();
             state.origin = point;
             state.originMode = false;
-            const button = byId('slam_origin_button');
+            const button = byId('motion_origin_button');
             if (button) {
                 button.classList.remove('is-active');
                 button.setAttribute('aria-pressed', 'false');
@@ -802,14 +802,14 @@
     }
 
     function finishRoiSelection(event) {
-        const canvas = byId('slam_microscope_canvas');
+        const canvas = byId('motion_microscope_canvas');
         if (!state.roiMode || !canvas || !state.roiDragStart) return;
         const end = canvasImagePoint(canvas, event);
         const start = state.roiDragStart;
         state.roiDragStart = null;
         state.roiDragCurrent = null;
         state.roiMode = false;
-        const roiButton = byId('slam_roi_button');
+        const roiButton = byId('motion_roi_button');
         if (roiButton) {
             roiButton.classList.remove('is-active');
             roiButton.setAttribute('aria-pressed', 'false');
@@ -875,9 +875,9 @@
 
     function updateLiveButtons() {
         const live = !!state.mediaStream;
-        const stop = byId('slam_camera_stop_btn');
+        const stop = byId('motion_camera_stop_btn');
         if (stop) stop.disabled = !live;
-        ['slam_camera_start_btn', 'slam_screen_start_btn'].forEach(id => {
+        ['motion_camera_start_btn', 'motion_screen_start_btn'].forEach(id => {
             const button = byId(id);
             if (button) button.disabled = live;
         });
@@ -930,13 +930,13 @@
     }
 
     function focusPointFromCanvas(event) {
-        const canvas = byId('slam_focus_canvas');
+        const canvas = byId('motion_focus_canvas');
         if (!canvas) return null;
         const bounds = canvas.getBoundingClientRect();
         if (!bounds.width || !bounds.height) return null;
         const pixelX = (event.clientX - bounds.left) * canvas.width / bounds.width;
         const pixelY = (event.clientY - bounds.top) * canvas.height / bounds.height;
-        const field = Math.max(1, numberValue('slam_focus_field_um', 20));
+        const field = Math.max(1, numberValue('motion_focus_field_um', 20));
         const pad = 34;
         const width = canvas.width - pad * 2;
         const height = canvas.height - pad * 2;
@@ -1014,7 +1014,7 @@
             return;
         }
 
-        const field = Math.max(1, numberValue('slam_focus_field_um', 20));
+        const field = Math.max(1, numberValue('motion_focus_field_um', 20));
         const step = field / (event.shiftKey ? 20 : 200);
         if (direction === 'ArrowLeft') state.cursorFocusUm.x_um -= step;
         if (direction === 'ArrowRight') state.cursorFocusUm.x_um += step;
@@ -1028,10 +1028,10 @@
     }
 
     function bindControls() {
-        const imageInput = byId('slam_image_input');
+        const imageInput = byId('motion_image_input');
         if (imageInput) imageInput.addEventListener('change', () => loadMicroscopeFile(imageInput.files?.[0]));
 
-        const microscope = byId('slam_microscope_canvas');
+        const microscope = byId('motion_microscope_canvas');
         if (microscope) {
             microscope.addEventListener('click', clickMicroscope);
             microscope.addEventListener('pointerdown', event => {
@@ -1053,13 +1053,13 @@
             microscope.addEventListener('keydown', event => keyboardCanvasAction(microscope, event, 'microscope'));
         }
 
-        const cameraStart = byId('slam_camera_start_btn');
+        const cameraStart = byId('motion_camera_start_btn');
         if (cameraStart) cameraStart.addEventListener('click', () => startLiveMicroscope('camera'));
-        const screenStart = byId('slam_screen_start_btn');
+        const screenStart = byId('motion_screen_start_btn');
         if (screenStart) screenStart.addEventListener('click', () => startLiveMicroscope('screen'));
-        const cameraStop = byId('slam_camera_stop_btn');
+        const cameraStop = byId('motion_camera_stop_btn');
         if (cameraStop) cameraStop.addEventListener('click', stopLiveMicroscope);
-        const roiButton = byId('slam_roi_button');
+        const roiButton = byId('motion_roi_button');
         if (roiButton) roiButton.addEventListener('click', () => {
             if (!state.image) {
                 notify('请先启动实时画面或导入显微镜图像', 'warning');
@@ -1072,13 +1072,13 @@
             roiButton.setAttribute('aria-pressed', String(state.roiMode));
             setStatus(state.roiMode ? '在画面中拖拽选择 ROI 区域' : '已退出 ROI 选择', 'info');
         });
-        const scaleButton = byId('slam_scale_button');
+        const scaleButton = byId('motion_scale_button');
         if (scaleButton) scaleButton.addEventListener('click', () => {
             if (!state.image) {
                 notify('请先启动实时画面或导入显微镜图像', 'warning');
                 return;
             }
-            const reference = numberValue('slam_reference_distance_um', NaN);
+            const reference = numberValue('motion_reference_distance_um', NaN);
             if (!(reference > 0)) {
                 notify('请输入大于 0 的标尺实际长度', 'warning');
                 return;
@@ -1087,18 +1087,18 @@
             state.scalePoints = [];
             scaleButton.classList.toggle('is-active', state.scaleMode);
             scaleButton.setAttribute('aria-pressed', String(state.scaleMode));
-            const output = byId('slam_scale_status');
+            const output = byId('motion_scale_status');
             if (output && state.scaleMode) output.textContent = '等待点击标尺两端点';
             setStatus(state.scaleMode ? '在 ROI 画面依次点击已知标尺的两个端点' : '已退出两点标定', 'info');
             drawMicroscope();
         });
-        const focus = byId('slam_focus_canvas');
+        const focus = byId('motion_focus_canvas');
         if (focus) {
             focus.addEventListener('click', clickFocusPlot);
             focus.addEventListener('keydown', event => keyboardCanvasAction(focus, event, 'focus'));
         }
 
-        const originButton = byId('slam_origin_button');
+        const originButton = byId('motion_origin_button');
         if (originButton) originButton.addEventListener('click', () => {
             if (!state.image) {
                 notify('请先导入显微镜图像', 'warning');
@@ -1110,13 +1110,13 @@
             setStatus(state.originMode ? '请在显微镜图像上点击标定原点' : '已退出原点设置', 'info');
         });
 
-        const scaleInput = byId('slam_pixels_per_um');
+        const scaleInput = byId('motion_pixels_per_um');
         if (scaleInput) {
             const updateScale = () => {
                 resetFeedbackForCalibrationChange();
                 scaleCalibration();
-                const value = numberValue('slam_pixels_per_um', NaN);
-                const output = byId('slam_scale_status');
+                const value = numberValue('motion_pixels_per_um', NaN);
+                const output = byId('motion_scale_status');
                 if (output) output.textContent = value > 0
                     ? `手动比例：${(1 / value).toPrecision(6)} μm/px`
                     : '未完成距离标定';
@@ -1124,7 +1124,7 @@
             scaleInput.addEventListener('input', updateScale);
             scaleInput.addEventListener('change', updateScale);
         }
-        ['slam_focus_scale_x', 'slam_focus_scale_y'].forEach(id => {
+        ['motion_focus_scale_x', 'motion_focus_scale_y'].forEach(id => {
             const input = byId(id);
             if (input) input.addEventListener('input', () => {
                 resetFeedbackForCalibrationChange();
@@ -1132,13 +1132,13 @@
                 renderMarkers();
             });
         });
-        const assignment = byId('slam_assign_select');
+        const assignment = byId('motion_assign_select');
         if (assignment) assignment.addEventListener('change', () => {
             state.selectedMarkerId = assignment.value || null;
             renderMarkers();
             if (state.selectedMarkerId) assignSelectedMaterial(state.activeSpot);
         });
-        const tabs = byId('slam_spot_tabs');
+        const tabs = byId('motion_spot_tabs');
         if (tabs) tabs.addEventListener('click', event => {
             const button = event.target.closest('[data-spot-index]');
             if (!button) return;
@@ -1152,21 +1152,21 @@
             else drawFocusPlot();
         });
 
-        ['slam_focus_field_um'].forEach(id => {
+        ['motion_focus_field_um'].forEach(id => {
             const input = byId(id);
             if (input) input.addEventListener('input', drawFocusPlot);
         });
-        const generate = byId('slam_generate_btn');
+        const generate = byId('motion_generate_btn');
         if (generate) generate.addEventListener('click', generateJob);
-        const undo = byId('slam_undo_waypoint');
+        const undo = byId('motion_undo_waypoint');
         if (undo) undo.addEventListener('click', undoWaypoint);
-        const clearPath = byId('slam_clear_path');
+        const clearPath = byId('motion_clear_path');
         if (clearPath) clearPath.addEventListener('click', clearActivePath);
-        const addCgh = byId('slam_add_cgh_btn');
-        if (addCgh) addCgh.addEventListener('click', addSLAMFramesToCGH);
-        const exportButton = byId('slam_export_btn');
+        const addCgh = byId('motion_add_cgh_btn');
+        if (addCgh) addCgh.addEventListener('click', addMotionFramesToCGH);
+        const exportButton = byId('motion_export_btn');
         if (exportButton) exportButton.addEventListener('click', downloadExport);
-        const feedbackMode = byId('slam_feedback_mode_btn');
+        const feedbackMode = byId('motion_feedback_mode_btn');
         if (feedbackMode) feedbackMode.addEventListener('click', () => {
             if (state.feedbackMode) {
                 state.feedbackMode = false;
@@ -1178,7 +1178,7 @@
                 beginSpotFeedback();
             }
         });
-        const applyFeedback = byId('slam_apply_feedback_btn');
+        const applyFeedback = byId('motion_apply_feedback_btn');
         if (applyFeedback) applyFeedback.addEventListener('click', () => {
             try {
                 applySpotFeedback();
@@ -1186,13 +1186,13 @@
                 setFeedbackReport(error.message, 'error');
             }
         });
-        const clearFeedback = byId('slam_clear_feedback_btn');
+        const clearFeedback = byId('motion_clear_feedback_btn');
         if (clearFeedback) clearFeedback.addEventListener('click', clearSpotFeedback);
-        const upload = byId('slam_upload_btn');
+        const upload = byId('motion_upload_btn');
         if (upload) upload.addEventListener('click', uploadToSLM);
-        const previous = byId('slam_preview_prev');
+        const previous = byId('motion_preview_prev');
         if (previous) previous.addEventListener('click', () => showPreview(state.previewIndex - 1));
-        const next = byId('slam_preview_next');
+        const next = byId('motion_preview_next');
         if (next) next.addEventListener('click', () => showPreview(state.previewIndex + 1));
     }
 
@@ -1269,7 +1269,7 @@
     }
 
     function buildPayload() {
-        const pxPerUm = numberValue('slam_pixels_per_um', NaN);
+        const pxPerUm = numberValue('motion_pixels_per_um', NaN);
         if (!state.image || !state.origin) throw new Error('请先导入显微镜图像并设置标定原点');
         if (!(pxPerUm > 0)) throw new Error('像素标定 px/μm 必须大于 0');
         if (state.assignments.some(value => !value)) throw new Error('请将三个光斑分别绑定到材料标记');
@@ -1277,18 +1277,18 @@
             throw new Error('三个光斑都需要至少一个有效路径点');
         }
         const parameters = {
-            focal_length_um: numberValue('slam_focal_um', 1000),
-            wavelength_nm: numberValue('slam_wavelength_nm', 532),
-            magnification: numberValue('slam_magnification', 50),
-            algorithm: byId('slam_algorithm')?.value || 'gaussian_wgs',
-            phase_direction: byId('slam_phase_direction')?.value || 'standard',
-            incident_beam_diameter_mm: numberValue('slam_beam_diameter_mm', 6),
-            spot_diameter_um: numberValue('slam_spot_diameter_um', 6),
-            width: numberValue('slam_width', 1272),
-            height: numberValue('slam_height', 1024),
-            speed_um_s: numberValue('slam_speed_um_s', 2),
-            frame_interval_ms: numberValue('slam_frame_interval_ms', 100),
-            iterations: numberValue('slam_iterations', 30),
+            focal_length_um: numberValue('motion_focal_um', 1000),
+            wavelength_nm: numberValue('motion_wavelength_nm', 532),
+            magnification: numberValue('motion_magnification', 50),
+            algorithm: byId('motion_algorithm')?.value || 'gaussian_wgs',
+            phase_direction: byId('motion_phase_direction')?.value || 'standard',
+            incident_beam_diameter_mm: numberValue('motion_beam_diameter_mm', 6),
+            spot_diameter_um: numberValue('motion_spot_diameter_um', 6),
+            width: numberValue('motion_width', 1272),
+            height: numberValue('motion_height', 1024),
+            speed_um_s: numberValue('motion_speed_um_s', 2),
+            frame_interval_ms: numberValue('motion_frame_interval_ms', 100),
+            iterations: numberValue('motion_iterations', 30),
             output_width: 512,
             output_height: 512
         };
@@ -1306,8 +1306,8 @@
                 origin_y_px: state.origin.y_px,
                 pixels_per_um: pxPerUm,
                 y_up: true,
-                focus_scale_x: numberValue('slam_focus_scale_x', 1),
-                focus_scale_y: numberValue('slam_focus_scale_y', 1),
+                focus_scale_x: numberValue('motion_focus_scale_x', 1),
+                focus_scale_y: numberValue('motion_focus_scale_y', 1),
                 magnification: parameters.magnification
             },
             paths,
@@ -1348,7 +1348,7 @@
         activeInputsDisabled(true);
         setProgress(0, '正在提交路径规划…');
         try {
-            const created = await fetch('/api/slam/motion/jobs', {
+            const created = await fetch('/api/spot_motion/jobs', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -1361,7 +1361,7 @@
             }
             for (let index = 0; index < frameCount; index++) {
                 const frame = await fetch(
-                    `/api/slam/motion/jobs/${encodeURIComponent(state.jobId)}/next`,
+                    `/api/spot_motion/jobs/${encodeURIComponent(state.jobId)}/next`,
                     { method: 'POST' }
                 ).then(readResponse);
                 if (['failed', 'error'].includes(frame.status)) {
@@ -1371,7 +1371,7 @@
                 setProgress(complete * 100 / frameCount,
                     `相位帧生成中：${complete}/${frameCount}`);
             }
-            const finished = await fetch(`/api/slam/motion/jobs/${encodeURIComponent(state.jobId)}`)
+            const finished = await fetch(`/api/spot_motion/jobs/${encodeURIComponent(state.jobId)}`)
                 .then(readResponse);
             if (['failed', 'error'].includes(finished.status)) {
                 throw new Error(finished.error || '相位帧生成失败');
@@ -1382,11 +1382,11 @@
             state.jobCalibration = { ...payload.calibration };
             if (!state.phaseUrls.length) {
                 state.phaseUrls = Array.from({ length: frameCount }, (_, index) =>
-                    `/api/slam/motion/jobs/${encodeURIComponent(state.jobId)}/frames/${index}/phase`);
+                    `/api/spot_motion/jobs/${encodeURIComponent(state.jobId)}/frames/${index}/phase`);
             }
             if (!state.reconstructionUrls.length) {
                 state.reconstructionUrls = Array.from({ length: frameCount }, (_, index) =>
-                    `/api/slam/motion/jobs/${encodeURIComponent(state.jobId)}/frames/${index}/reconstruction`);
+                    `/api/spot_motion/jobs/${encodeURIComponent(state.jobId)}/frames/${index}/reconstruction`);
             }
             setProgress(100, `完成：${frameCount} 帧相位图`);
             assignControlsEnabled(true);
@@ -1412,7 +1412,7 @@
         const resource = key === 'phase_urls' ? 'phase' : 'reconstruction';
         return count > 0
             ? Array.from({ length: count }, (_, index) =>
-                `/api/slam/motion/jobs/${encodeURIComponent(jobId)}/frames/${index}/${resource}`)
+                `/api/spot_motion/jobs/${encodeURIComponent(jobId)}/frames/${index}/${resource}`)
             : [];
     }
 
@@ -1422,7 +1422,7 @@
         if (nextIndex !== state.previewIndex) {
             state.feedbackMode = false;
             state.feedbackMeasurements = [null, null, null];
-            const feedbackButton = byId('slam_feedback_mode_btn');
+            const feedbackButton = byId('motion_feedback_mode_btn');
             if (feedbackButton) {
                 feedbackButton.classList.remove('is-active');
                 feedbackButton.setAttribute('aria-pressed', 'false');
@@ -1430,39 +1430,39 @@
             setFeedbackReport('帧已切换，请针对当前帧重新测量三个光斑。', 'info');
         }
         state.previewIndex = nextIndex;
-        const phase = byId('slam_phase_preview');
-        const reconstruction = byId('slam_recon_preview');
+        const phase = byId('motion_phase_preview');
+        const reconstruction = byId('motion_recon_preview');
         if (phase) phase.src = state.phaseUrls[state.previewIndex];
         if (reconstruction) {
             const url = state.reconstructionUrls[state.previewIndex];
             if (url) reconstruction.src = url;
             else reconstruction.removeAttribute('src');
         }
-        const counter = byId('slam_frame_counter');
+        const counter = byId('motion_frame_counter');
         if (counter) counter.textContent = `帧 ${state.previewIndex + 1}/${state.phaseUrls.length}`;
-        const previous = byId('slam_preview_prev');
-        const next = byId('slam_preview_next');
+        const previous = byId('motion_preview_prev');
+        const next = byId('motion_preview_next');
         if (previous) previous.disabled = state.previewIndex === 0;
         if (next) next.disabled = state.previewIndex === state.phaseUrls.length - 1;
         updateFeedbackButtons();
     }
 
-    async function addSLAMFramesToCGH() {
+    async function addMotionFramesToCGH() {
         if (state.addingToCgh) return false;
         if (!state.jobId || !state.phaseUrls.length) {
             notify('请先完成路径相位图生成', 'warning');
             return false;
         }
-        if (typeof window.appendSLAMJobToCGH !== 'function') {
+        if (typeof window.appendMotionJobToCGH !== 'function') {
             notify('CGH 序列交接接口尚未加载', 'error');
             return false;
         }
-        const addButton = byId('slam_add_cgh_btn');
+        const addButton = byId('motion_add_cgh_btn');
         state.addingToCgh = true;
         if (addButton) addButton.disabled = true;
         setStatus('正在将路径帧加入 CGH Simulation 序列…', 'info');
         try {
-            const result = await window.appendSLAMJobToCGH(state.jobId);
+            const result = await window.appendMotionJobToCGH(state.jobId);
             if (result === false) throw new Error('CGH 序列未接收该任务');
             if (typeof window.showModule === 'function') window.showModule('cgh-simulation');
             setStatus(`已将 ${state.phaseUrls.length} 帧加入 CGH Simulation`, 'success');
@@ -1479,8 +1479,8 @@
 
     async function downloadExport() {
         if (!state.jobId || state.exporting) return;
-        const url = `/api/slam/motion/jobs/${encodeURIComponent(state.jobId)}/export.zip`;
-        const button = byId('slam_export_btn');
+        const url = `/api/spot_motion/jobs/${encodeURIComponent(state.jobId)}/export.zip`;
+        const button = byId('motion_export_btn');
         state.exporting = true;
         if (button) button.disabled = true;
         setStatus('正在准备相位序列 ZIP…', 'info');
@@ -1499,7 +1499,7 @@
             const objectUrl = URL.createObjectURL(archive);
             const link = document.createElement('a');
             link.href = objectUrl;
-            link.download = `slam_motion_${state.jobId}.zip`;
+            link.download = `spot_motion_${state.jobId}.zip`;
             document.body.append(link);
             link.click();
             link.remove();
@@ -1520,7 +1520,7 @@
             notify('请先完成路径相位图生成', 'warning');
             return;
         }
-        const overwrite = byId('slam_usb_overwrite');
+        const overwrite = byId('motion_usb_overwrite');
         if (!overwrite || !overwrite.checked) {
             notify('请勾选“确认覆盖指定 FMem 槽位”后再上传', 'warning');
             return;
@@ -1528,7 +1528,7 @@
         if (!window.confirm(`将 ${state.phaseUrls.length} 帧写入指定的连续 FMem 槽位。现有槽位内容会被覆盖，继续吗？`)) {
             return;
         }
-        const button = byId('slam_upload_btn');
+        const button = byId('motion_upload_btn');
         state.uploading = true;
         if (button) button.disabled = true;
         setStatus('正在上传相位帧到 USB_SLMControl…', 'info');
@@ -1538,7 +1538,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     job_id: state.jobId,
-                    start_slot: numberValue('slam_usb_start_slot', 0),
+                    start_slot: numberValue('motion_usb_start_slot', 0),
                     overwrite_confirmed: true,
                     loop: true
                 })
@@ -1562,15 +1562,15 @@
 
     function getProjectState() {
         const params = {};
-        ['slam_pixels_per_um', 'slam_focal_um', 'slam_wavelength_nm', 'slam_magnification',
-            'slam_beam_diameter_mm', 'slam_spot_diameter_um', 'slam_width', 'slam_height',
-            'slam_speed_um_s', 'slam_frame_interval_ms', 'slam_iterations',
-            'slam_focus_scale_x', 'slam_focus_scale_y', 'slam_focus_field_um',
-            'slam_detection_radius_px', 'slam_feedback_gain'].forEach(id => {
+        ['motion_pixels_per_um', 'motion_focal_um', 'motion_wavelength_nm', 'motion_magnification',
+            'motion_beam_diameter_mm', 'motion_spot_diameter_um', 'motion_width', 'motion_height',
+            'motion_speed_um_s', 'motion_frame_interval_ms', 'motion_iterations',
+            'motion_focus_scale_x', 'motion_focus_scale_y', 'motion_focus_field_um',
+            'motion_detection_radius_px', 'motion_feedback_gain'].forEach(id => {
             const input = byId(id);
             if (input) params[id] = input.value;
         });
-        ['slam_algorithm', 'slam_phase_direction'].forEach(id => {
+        ['motion_algorithm', 'motion_phase_direction'].forEach(id => {
             const input = byId(id);
             if (input) params[id] = input.value;
         });
@@ -1610,7 +1610,7 @@
                 project.markers.length > MAX_MARKERS || !Array.isArray(project.paths) ||
                 project.paths.length !== 3 || !Array.isArray(project.assignments) ||
                 project.assignments.length !== 3) {
-            throw new Error('SLAM 项目数据格式无效');
+            throw new Error('项目数据格式无效');
         }
         const markers = project.markers.map((marker, index) => {
             if (!marker || typeof marker.id !== 'string' ||
@@ -1689,9 +1689,9 @@
         state.activeSpot = 0;
         Object.entries(project.parameters || {}).forEach(([id, value]) => {
             const input = byId(id);
-            if (input && typeof value === 'string' && !['slam_algorithm', 'slam_phase_direction'].includes(id)) {
+            if (input && typeof value === 'string' && !['motion_algorithm', 'motion_phase_direction'].includes(id)) {
                 input.value = value;
-            } else if (input && ['slam_algorithm', 'slam_phase_direction'].includes(id)) {
+            } else if (input && ['motion_algorithm', 'motion_phase_direction'].includes(id)) {
                 input.value = String(value);
             }
         });
@@ -1704,8 +1704,8 @@
 
     function initialize() {
         if (state.initialized) return;
-        const microscope = byId('slam_microscope_canvas');
-        const focus = byId('slam_focus_canvas');
+        const microscope = byId('motion_microscope_canvas');
+        const focus = byId('motion_focus_canvas');
         if (!microscope || !focus) return;
         state.initialized = true;
         microscope.width = microscope.width || 960;
@@ -1718,15 +1718,15 @@
         syncSpotTabs();
         drawFocusPlot();
         assignControlsEnabled(false);
-        const phase = byId('slam_phase_preview');
-        const reconstruction = byId('slam_recon_preview');
+        const phase = byId('motion_phase_preview');
+        const reconstruction = byId('motion_recon_preview');
         if (phase) phase.alt = '当前帧的 SLM 相位图';
         if (reconstruction) reconstruction.alt = '当前帧的傅里叶重建结果';
     }
 
-    window.initSLAMMotion = initialize;
-    window.addSLAMFramesToCGH = addSLAMFramesToCGH;
-    window.SLAMMotion = {
+    window.initSpotMotion = initialize;
+    window.addMotionFramesToCGH = addMotionFramesToCGH;
+    window.SpotMotion = {
         state,
         initialize,
         buildPayload,
@@ -1734,7 +1734,7 @@
         restoreProjectState,
         generateJob,
         showPreview,
-        addSLAMFramesToCGH,
+        addMotionFramesToCGH,
         sampleToFocusUm,
         beginSpotFeedback,
         recordSpotMeasurement,

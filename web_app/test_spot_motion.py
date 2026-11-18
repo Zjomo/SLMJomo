@@ -3,7 +3,7 @@
 import math
 import unittest
 
-from slam_motion import (
+from spot_motion import (
     calibrate_pixel_to_sample_um,
     plan_motion_frames,
     sample_to_focus_um,
